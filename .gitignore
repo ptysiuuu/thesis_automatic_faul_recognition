@@ -1,0 +1,23 @@
+# Pliki wag modeli (PyTorch, TensorFlow, Keras)
+*.pt
+*.pth
+*.h5
+*.ckpt
+*.bin
+*.weights
+*.pb
+*.onnx
+
+# Katalogi z wynikami i logami
+runs/
+checkpoints/
+logs/
+results/
+models/
+
+# Dane treningowe (często też nie chcemy ich w Gicie)
+data/
+datasets/
+*.zip
+*.tar.gz
+*.csv

@@ -15,7 +15,8 @@ from torchvision.models.video import R3D_18_Weights, MC3_18_Weights
 from torchvision.models.video import R2Plus1D_18_Weights, S3D_Weights
 from torchvision.models.video import MViT_V2_S_Weights, MViT_V1_B_Weights
 from torchvision.models.video import mvit_v2_s, MViT_V2_S_Weights, mvit_v1_b, MViT_V1_B_Weights
-
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="torchvision")
 
 def checkArguments():
 
@@ -32,9 +33,9 @@ def checkArguments():
         exit()
 
     # args.pooling_type
-    if args.pooling_type != 'max' and args.pooling_type != 'mean' and args.pooling_type != 'attention':
+    if args.pooling_type not in ['max', 'mean', 'attention', 'transformer']:
         print("Could not find your desired argument for --args.pooling_type:")
-        print("Possible arguments are: max or mean")
+        print("Possible arguments are: max, mean, attention, transformer")
         exit()
 
     # args.weighted_loss
