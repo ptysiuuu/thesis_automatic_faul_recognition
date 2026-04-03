@@ -105,7 +105,7 @@ class MultiViewDataset(Dataset):
 
         # Padding do MAX_VIEWS (4) przez duplikację ostatniego sprawnego widoku
         # Dzięki temu Transformer zawsze dostanie sekwencję o stałej długości 4
-        while videos.shape[0] self.num_views:
+        while videos.shape[0] < self.num_views:
             videos = torch.cat((videos, videos[-1:].clone()), dim=0)
 
         # Przycięcie na wypadek nadmiarowych plików
