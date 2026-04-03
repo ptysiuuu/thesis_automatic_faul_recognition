@@ -10,9 +10,7 @@
 #SBATCH --output=transformer_results.log
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
-
 conda activate vars
-
 cd /net/tscratch/people/plgaszos/sn-mvfoul/"VARS model"
 
 python main.py \
@@ -24,4 +22,7 @@ python main.py \
   --fps 17 \
   --batch_size 4 \
   --only_evaluation 3 \
-  --max_num_worker 15
+  --max_num_worker 15 \
+  --step_size 20 \
+  --gamma 0.5 \
+  --max_epochs 60

@@ -73,7 +73,7 @@ def main(*args):
         start_frame = args.start_frame
         end_frame = args.end_frame
         weight_decay = args.weight_decay
-        
+
         model_name = args.model_name
         pre_model = args.pre_model
         num_views = args.num_views
@@ -129,11 +129,11 @@ def main(*args):
         transformAug = None
 
     if pre_model == "r3d_18":
-        transforms_model = R3D_18_Weights.KINETICS400_V1.transforms()        
+        transforms_model = R3D_18_Weights.KINETICS400_V1.transforms()
     elif pre_model == "s3d":
-        transforms_model = S3D_Weights.KINETICS400_V1.transforms()       
+        transforms_model = S3D_Weights.KINETICS400_V1.transforms()
     elif pre_model == "mc3_18":
-        transforms_model = MC3_18_Weights.KINETICS400_V1.transforms()       
+        transforms_model = MC3_18_Weights.KINETICS400_V1.transforms()
     elif pre_model == "r2plus1d_18":
         transforms_model = R2Plus1D_18_Weights.KINETICS400_V1.transforms()
     elif pre_model == "mvit_v2_s":
@@ -143,31 +143,31 @@ def main(*args):
         print("Warning: Could not find the desired pretrained model")
         print("Possible options are: r3d_18, s3d, mc3_18, mvit_v2_s and r2plus1d_18")
         print("We continue with r2plus1d_18")
-    
+
     if only_evaluation == 0:
-        dataset_Test2 = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Test', num_views = 5, 
+        dataset_Test2 = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Test', num_views = 5,
         transform_model=transforms_model)
-        
+
         test_loader2 = torch.utils.data.DataLoader(dataset_Test2,
             batch_size=1, shuffle=False,
             num_workers=max_num_worker, pin_memory=True)
     elif only_evaluation == 1:
-        dataset_Chall = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Chall', num_views = 5, 
+        dataset_Chall = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Chall', num_views = 5,
         transform_model=transforms_model)
 
         chall_loader2 = torch.utils.data.DataLoader(dataset_Chall,
             batch_size=1, shuffle=False,
             num_workers=max_num_worker, pin_memory=True)
     elif only_evaluation == 2:
-        dataset_Test2 = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Test', num_views = 5, 
+        dataset_Test2 = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Test', num_views = 5,
         transform_model=transforms_model)
-        dataset_Chall = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Chall', num_views = 5, 
+        dataset_Chall = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Chall', num_views = 5,
         transform_model=transforms_model)
 
         test_loader2 = torch.utils.data.DataLoader(dataset_Test2,
             batch_size=1, shuffle=False,
             num_workers=max_num_worker, pin_memory=True)
-        
+
         chall_loader2 = torch.utils.data.DataLoader(dataset_Chall,
             batch_size=1, shuffle=False,
             num_workers=max_num_worker, pin_memory=True)
@@ -175,9 +175,9 @@ def main(*args):
         # Create Train Validation and Test datasets
         dataset_Train = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Train',
             num_views = num_views, transform=transformAug, transform_model=transforms_model)
-        dataset_Valid2 = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Valid', num_views = 5, 
+        dataset_Valid2 = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Valid', num_views = num_views,
             transform_model=transforms_model)
-        dataset_Test2 = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Test', num_views = 5, 
+        dataset_Test2 = MultiViewDataset(path=path, start=start_frame, end=end_frame, fps=fps, split='Test', num_views = num_views,
             transform_model=transforms_model)
 
         # Create the dataloaders for train validation and test datasets
@@ -188,7 +188,7 @@ def main(*args):
         val_loader2 = torch.utils.data.DataLoader(dataset_Valid2,
             batch_size=1, shuffle=False,
             num_workers=max_num_worker, pin_memory=True)
-        
+
         test_loader2 = torch.utils.data.DataLoader(dataset_Test2,
             batch_size=1, shuffle=False,
             num_workers=max_num_worker, pin_memory=True)
@@ -205,11 +205,11 @@ def main(*args):
 
     if only_evaluation == 3:
 
-        optimizer = torch.optim.AdamW(model.parameters(), lr=LR, 
-                                    betas=(0.9, 0.999), eps=1e-07, 
+        optimizer = torch.optim.AdamW(model.parameters(), lr=LR,
+                                    betas=(0.9, 0.999), eps=1e-07,
                                     weight_decay=weight_decay, amsgrad=False)
-        
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
+
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_epochs, eta_min=1e-6)
 
         epoch_start = 0
 
@@ -238,7 +238,7 @@ def main(*args):
             test_loader2,
             model,
             set_name="test",
-        ) 
+        )
         results = evaluate(os.path.join(path, "Test", "annotations.json"), prediction_file)
         print("TEST")
         print(results)
@@ -275,16 +275,16 @@ def main(*args):
         print("CHALL")
         print(results)
     else:
-        trainer(train_loader, val_loader2, test_loader2, model, optimizer, scheduler, criterion, 
+        trainer(train_loader, val_loader2, test_loader2, model, optimizer, scheduler, criterion,
                 best_model_path, epoch_start, model_name=model_name, path_dataset=path, max_epochs=max_epochs)
-        
+
     return 0
 
 
 
 if __name__ == '__main__':
 
-    parser = ArgumentParser(description='my method', formatter_class=ArgumentDefaultsHelpFormatter)    
+    parser = ArgumentParser(description='my method', formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument('--path',   required=True, type=str, help='Path to the dataset folder' )
     parser.add_argument('--max_epochs',   required=False, type=int,   default=60,     help='Maximum number of epochs' )
     parser.add_argument('--model_name',   required=False, type=str,   default="VARS",     help='named of the model to save' )

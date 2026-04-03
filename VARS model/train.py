@@ -44,7 +44,7 @@ def trainer(train_loader,
 
     logging.info("start training")
     counter = 0
-
+    best_val = 0.0
     for epoch in range(epoch_start, max_epochs):
 
         print(f"Epoch {epoch+1}/{max_epochs}")
@@ -84,6 +84,18 @@ def trainer(train_loader,
         print("VALIDATION")
         print(results)
 
+        # Po ewaluacji validacji:
+        val_leaderboard = results.get('leaderboard_value', 0)
+        if val_leaderboard > best_val:
+            best_val = val_leaderboard
+            best_state = {
+                'epoch': epoch + 1,
+                'state_dict': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'scheduler': scheduler.state_dict()
+            }
+            torch.save(best_state, os.path.join(best_model_path, "best_model.pth.tar"))
+
         ###################### TEST ###################
         prediction_file, loss_action, loss_offence_severity = train(
             test_loader2,
@@ -104,7 +116,7 @@ def trainer(train_loader,
 
         counter += 1
 
-        if counter > 3:
+        if counter >= 1:
             state = {
                 'epoch': epoch + 1,
                 'state_dict': model.state_dict(),
