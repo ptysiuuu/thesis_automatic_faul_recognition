@@ -205,9 +205,20 @@ def main(*args):
 
     if only_evaluation == 3:
 
-        optimizer = torch.optim.AdamW(model.parameters(), lr=LR,
-                                    betas=(0.9, 0.999), eps=1e-07,
-                                    weight_decay=weight_decay, amsgrad=False)
+        # Rozdzielamy parametry na sieć bazową (backbone) i nową głowę (agregację + klasyfikatory)
+        backbone_params = []
+        head_params = []
+        for name, param in model.named_parameters():
+            if "aggregation_model" in name or "fc_" in name or "inter" in name:
+                head_params.append(param)
+            else:
+                backbone_params.append(param)
+
+        # Ustawiamy Learning Rate dla backbone na 10x mniejszy niż dla nowej głowy
+        optimizer = torch.optim.AdamW([
+            {'params': backbone_params, 'lr': LR * 0.1},
+            {'params': head_params, 'lr': LR}
+        ], betas=(0.9, 0.999), eps=1e-07, weight_decay=weight_decay, amsgrad=False)
 
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_epochs, eta_min=1e-6)
 

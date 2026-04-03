@@ -103,10 +103,13 @@ class MultiViewDataset(Dataset):
         # Stack dostępnych widoków: [V, C, T, H, W]
         videos = torch.stack(processed_views, dim=0)
 
-        # Padding do MAX_VIEWS (4) przez duplikację ostatniego sprawnego widoku
-        # Dzięki temu Transformer zawsze dostanie sekwencję o stałej długości 4
-        while videos.shape[0] < self.num_views:
-            videos = torch.cat((videos, videos[-1:].clone()), dim=0)
+        # Padding brakujących widoków zerami, aby Transformer mógł je odmaskować
+        real_views_count = videos.shape[0]
+        if real_views_count < self.num_views:
+            pad_shape = list(videos.shape)
+            pad_shape[0] = self.num_views - real_views_count
+            padding = torch.zeros(pad_shape, dtype=videos.dtype)
+            videos = torch.cat((videos, padding), dim=0)
 
         # Przycięcie na wypadek nadmiarowych plików
         videos = videos[:self.num_views]

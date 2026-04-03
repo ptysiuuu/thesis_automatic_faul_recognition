@@ -11,10 +11,10 @@ class TransformerAggregate(nn.Module):
 
         # 1. Token [CLS] - zbiera informacje ze wszystkich widoków
         self.cls_token = nn.Parameter(torch.zeros(1, 1, feat_dim))
-        
+
         # 2. View Embeddings - model uczy się charakterystyki każdego ujęcia (max 5 widoków)
         self.view_embeds = nn.Parameter(torch.zeros(1, 5, feat_dim))
-        
+
         # 3. Transformer Encoder
         encoder_layer = nn.TransformerEncoderLayer(d_model=feat_dim, nhead=num_heads, batch_first=True)
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
@@ -26,21 +26,28 @@ class TransformerAggregate(nn.Module):
         B, V, C, D, H, W = mvimages.shape
         # Ekstrakcja cech z każdego widoku przez backbone (np. MViT)
         aux = self.lifting_net(unbatch_tensor(self.model(batch_tensor(mvimages, dim=1, squeeze=True)), B, dim=1, unsqueeze=True))
-        
+
         # Dodanie embeddingów widoku (View Embeddings)
         # Przycinamy embeddingi do aktualnej liczby widoków V w batchu
         aux = aux + self.view_embeds[:, :V, :]
-        
-        # Rozszerzenie tokena [CLS] do rozmiaru batcha i doklejenie na początek sekwencji
+
         cls_tokens = self.cls_token.expand(B, -1, -1)
         x = torch.cat((cls_tokens, aux), dim=1) # [B, V+1, feat_dim]
-        
-        # Przetworzenie przez Transformer (Self-Attention między widokami i CLS)
-        x = self.transformer(x)
-        
+
+        # Tworzenie maski dla brakujących widoków (True oznacza "ignoruj")
+        # Wykrywamy wyzerowane tensory z dataset.py
+        view_mask = (mvimages.abs().sum(dim=(2, 3, 4, 5)) == 0)
+
+        # Token [CLS] na pozycji 0 nigdy nie jest maskowany (False)
+        cls_mask = torch.zeros((B, 1), dtype=torch.bool, device=mvimages.device)
+        padding_mask = torch.cat((cls_mask, view_mask), dim=1) # [B, V+1]
+
+        # Przetworzenie przez Transformer z użyciem maski
+        x = self.transformer(x, src_key_padding_mask=padding_mask)
+
         # Zwracamy tylko stan tokena [CLS] (indeks 0) jako reprezentację całej akcji
         output = x[:, 0]
-        
+
         return output, None # None zamiast wag uwagi dla kompatybilności z resztą kodu
 
 class ViewMaxAggregate(nn.Module):
