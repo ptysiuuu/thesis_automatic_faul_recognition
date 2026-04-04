@@ -21,3 +21,7 @@ datasets/
 *.zip
 *.tar.gz
 *.csv
+
+*.pth.tar
+models/
+__pycache__/

@@ -25,4 +25,6 @@ python main.py \
   --max_num_worker 15 \
   --step_size 20 \
   --gamma 0.5 \
-  --max_epochs 60
+  --max_epochs 60 \
+  --weighted_loss "Yes" \
+  --path_to_model_weights "models/VARS/5/mvit_v2_s/0.0001/_B4_F16_S_G0.5_Step20/16_model.pth.tar"
