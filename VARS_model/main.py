@@ -225,7 +225,7 @@ def main(*args):
         epoch_start = 0
 
         if continue_training:
-            path_model = os.path.join(log_path, 'model.pth.tar')
+            path_model = path_to_model_weights
             load = torch.load(path_model)
             model.load_state_dict(load['state_dict'])
             optimizer.load_state_dict(load['optimizer'])
