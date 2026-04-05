@@ -5,10 +5,13 @@ from data_loader import label2vectormerge, clips2vectormerge
 from torchvision.io.video import read_video
 import warnings
 import logging
+import h5py
+import os
 
-# Uciszenie ostrzeżeń o jednostkach PTS i logów torchvision
 warnings.filterwarnings("ignore", category=UserWarning)
 logging.getLogger("torchvision").setLevel(logging.ERROR)
+
+HDF5_ROOT = "/net/tscratch/people/plgaszos/SoccerNet_HDF5"
 
 
 class MultiViewDataset(Dataset):
@@ -22,7 +25,6 @@ class MultiViewDataset(Dataset):
 
             self.weights_offence_severity = torch.div(1, torch.sqrt(self.distribution_offence_severity))
             self.weights_action = torch.div(1, torch.sqrt(self.distribution_action))
-            # Normalizacja — średnia waga = 1.0
             self.weights_offence_severity = self.weights_offence_severity / self.weights_offence_severity.mean()
             self.weights_action = self.weights_action / self.weights_action.mean()
         else:
@@ -36,7 +38,22 @@ class MultiViewDataset(Dataset):
         self.num_views = num_views
         self.factor = (end - start) / (((end - start) / 25) * fps)
         self.length = len(self.clips)
-        print(f"Loaded {self.length} actions for {split}")
+
+        # Ścieżka do HDF5 — NIE otwieramy tutaj, tylko zapamiętujemy ścieżkę
+        hdf5_path = os.path.join(HDF5_ROOT, f"{split}.hdf5")
+        self._hdf5_path = hdf5_path if os.path.exists(hdf5_path) else None
+        self._hdf5 = None  # lazy init per worker
+
+        print(f"Loaded {self.length} actions for {split} "
+              f"({'HDF5' if self._hdf5_path else 'fallback mp4'})")
+
+    def _get_hdf5(self):
+        """Lazy init — każdy worker DataLoadera otworzy własną kopię pliku."""
+        if self._hdf5_path is None:
+            return None
+        if self._hdf5 is None:
+            self._hdf5 = h5py.File(self._hdf5_path, "r", swmr=True)
+        return self._hdf5
 
     def getDistribution(self):
         return self.distribution_offence_severity, self.distribution_action
@@ -45,13 +62,51 @@ class MultiViewDataset(Dataset):
         return self.weights_offence_severity, self.weights_action
 
     def _process_clip(self, clip_path):
-        """
-        Wczytuje i przetwarza pojedynczy klip wideo.
-        Zwraca tensor [C, T, H, W] lub None jeśli klip jest uszkodzony.
-        """
+        hdf5 = self._get_hdf5()
+
+        if hdf5 is not None:
+            return self._process_clip_hdf5(clip_path, hdf5)
+        else:
+            return self._process_clip_video(clip_path)
+
+    def _process_clip_hdf5(self, clip_path, hdf5):
+        parts    = clip_path.split(os.sep)
+        action   = parts[-2]
+        clip_key = parts[-1].replace(".mp4", "")
+        key      = f"{action}/{clip_key}"
+
+        if key not in hdf5:
+            # Fallback do mp4 jeśli klip nie trafił do HDF5 (uszkodzony podczas ekstrakcji)
+            return self._process_clip_video(clip_path)
+
+        frames = torch.from_numpy(hdf5[key][:])  # [T, H, W, C] uint8
+
+        if frames.shape[0] < 2:
+            return None
+
+        final_frames = None
+        for j in range(len(frames)):
+            if j % self.factor < 1:
+                f = frames[j].unsqueeze(0)
+                final_frames = f if final_frames is None else torch.cat((final_frames, f), 0)
+
+        if final_frames is None:
+            return None
+
+        final_frames = final_frames.permute(0, 3, 1, 2).float() / 255.0  # [T, C, H, W]
+
+        if self.transform is not None:
+            final_frames = self.transform(final_frames)
+
+        final_frames = self.transform_model(final_frames)
+        final_frames = final_frames.permute(1, 0, 2, 3)  # [C, T, H, W]
+
+        return final_frames
+
+    def _process_clip_video(self, clip_path):
+        """Fallback — stary kod z read_video."""
         try:
-            # Używamy domyślnego wywołania, ale warningi są wyciszone globalnie
-            video, _, _ = read_video(clip_path, output_format="THWC")
+            video, _, _ = read_video(clip_path, pts_unit='sec', output_format="THWC")
         except Exception as e:
             print(f"Błąd odczytu {clip_path}: {e}")
             return None
@@ -65,21 +120,19 @@ class MultiViewDataset(Dataset):
 
         for j in range(len(frames)):
             if j % self.factor < 1:
-                if final_frames is None:
-                    final_frames = frames[j, :, :, :].unsqueeze(0)
-                else:
-                    final_frames = torch.cat((final_frames, frames[j, :, :, :].unsqueeze(0)), 0)
+                f = frames[j, :, :, :].unsqueeze(0)
+                final_frames = f if final_frames is None else torch.cat((final_frames, f), 0)
 
         if final_frames is None:
             return None
 
-        final_frames = final_frames.permute(0, 3, 1, 2)  # [T, H, W, C] -> [T, C, H, W]
+        final_frames = final_frames.permute(0, 3, 1, 2)
 
         if self.transform is not None:
             final_frames = self.transform(final_frames)
 
         final_frames = self.transform_model(final_frames)
-        final_frames = final_frames.permute(1, 0, 2, 3)  # [T, C, H, W] -> [C, T, H, W]
+        final_frames = final_frames.permute(1, 0, 2, 3)
 
         return final_frames
 
@@ -87,7 +140,6 @@ class MultiViewDataset(Dataset):
         available_clips = self.clips[index]
         num_available = len(available_clips)
 
-        # Dla Train: losowa kolejność widoków (augmentacja ujęć)
         if self.split == 'Train':
             indices = random.sample(range(num_available), num_available)
         else:
@@ -99,25 +151,18 @@ class MultiViewDataset(Dataset):
             if clip is not None:
                 processed_views.append(clip)
 
-        # Jeśli żaden widok w akcji nie jest poprawny, losuj inną akcję (bezpiecznik)
         if len(processed_views) == 0:
             return self.__getitem__(random.randint(0, self.length - 1))
 
-        # Stack dostępnych widoków: [V, C, T, H, W]
         videos = torch.stack(processed_views, dim=0)
 
-        # Padding brakujących widoków zerami, aby Transformer mógł je odmaskować
-        real_views_count = videos.shape[0]
-        if real_views_count < self.num_views:
+        if videos.shape[0] < self.num_views:
             pad_shape = list(videos.shape)
-            pad_shape[0] = self.num_views - real_views_count
+            pad_shape[0] = self.num_views - videos.shape[0]
             padding = torch.zeros(pad_shape, dtype=videos.dtype)
             videos = torch.cat((videos, padding), dim=0)
 
-        # Przycięcie na wypadek nadmiarowych plików
         videos = videos[:self.num_views]
-
-        # Konwersja do formatu [V, T, C, H, W] oczekiwanego przez model
         videos = videos.permute(0, 2, 1, 3, 4)
 
         if self.split != 'Chall':
@@ -132,3 +177,7 @@ class MultiViewDataset(Dataset):
 
     def __len__(self):
         return self.length
+
+    def __del__(self):
+        if hasattr(self, '_hdf5') and self._hdf5 is not None:
+            self._hdf5.close()
