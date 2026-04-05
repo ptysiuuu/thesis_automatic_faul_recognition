@@ -39,12 +39,14 @@ def trainer(train_loader,
             epoch_start,
             model_name,
             path_dataset,
-            max_epochs=1000
+            max_epochs=1000,
+            patience=6
             ):
 
     logging.info("start training")
     counter = 0
     best_val = 0.0
+    no_improve = 0
     for epoch in range(epoch_start, max_epochs):
 
         print(f"Epoch {epoch+1}/{max_epochs}")
@@ -88,6 +90,7 @@ def trainer(train_loader,
         val_leaderboard = results.get('leaderboard_value', 0)
         if val_leaderboard > best_val:
             best_val = val_leaderboard
+            no_improve = 0
             best_state = {
                 'epoch': epoch + 1,
                 'state_dict': model.state_dict(),
@@ -95,6 +98,11 @@ def trainer(train_loader,
                 'scheduler': scheduler.state_dict()
             }
             torch.save(best_state, os.path.join(best_model_path, "best_model.pth.tar"))
+        else:
+            no_improve += 1
+            if no_improve >= patience:
+                logging.info(f"Early stopping at epoch {epoch+1}, best valid LB: {best_val:.2f}")
+                break
 
         ###################### TEST ###################
         prediction_file, loss_action, loss_offence_severity = train(

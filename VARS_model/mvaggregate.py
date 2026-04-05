@@ -66,22 +66,27 @@ class MVAggregate(nn.Module):
         super().__init__()
         self.agr_type = agr_type
 
-        self.inter = nn.Sequential(
-            nn.LayerNorm(feat_dim),
-            nn.Linear(feat_dim, feat_dim),
-            nn.Linear(feat_dim, feat_dim),
-        )
-
         self.fc_offence = nn.Sequential(
             nn.LayerNorm(feat_dim),
+            nn.Dropout(p=0.3),
             nn.Linear(feat_dim, feat_dim),
+            nn.Dropout(p=0.3),
             nn.Linear(feat_dim, 4)
         )
 
         self.fc_action = nn.Sequential(
             nn.LayerNorm(feat_dim),
+            nn.Dropout(p=0.3),
             nn.Linear(feat_dim, feat_dim),
+            nn.Dropout(p=0.3),
             nn.Linear(feat_dim, 8)
+        )
+
+        self.inter = nn.Sequential(
+            nn.LayerNorm(feat_dim),
+            nn.Dropout(p=0.2),
+            nn.Linear(feat_dim, feat_dim),
+            nn.Linear(feat_dim, feat_dim),
         )
 
         if self.agr_type == "max":

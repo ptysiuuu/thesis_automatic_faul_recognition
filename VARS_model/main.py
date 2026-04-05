@@ -119,12 +119,13 @@ def main(*args):
     # Initialize the data augmentation
     if data_aug == 'Yes':
         transformAug = transforms.Compose([
-                                          transforms.RandomAffine(degrees=(0, 0), translate=(0.1, 0.1), scale=(0.9, 1)),
-                                          transforms.RandomPerspective(distortion_scale=0.3, p=0.5),
-                                          transforms.RandomRotation(degrees=5),
-                                          transforms.ColorJitter(brightness=0.5, saturation=0.5, contrast=0.5),
-                                          transforms.RandomHorizontalFlip()
-                                          ])
+            transforms.RandomAffine(degrees=(0, 0), translate=(0.1, 0.1), scale=(0.9, 1)),
+            transforms.RandomPerspective(distortion_scale=0.3, p=0.5),
+            transforms.RandomRotation(degrees=5),
+            transforms.ColorJitter(brightness=0.5, saturation=0.5, contrast=0.5),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomErasing(p=0.3, scale=(0.02, 0.2)),   # ← add
+        ])
     else:
         transformAug = None
 
@@ -234,8 +235,14 @@ def main(*args):
 
 
         if weighted_loss == 'Yes':
-            criterion_offence_severity = nn.CrossEntropyLoss(weight=dataset_Train.getWeights()[0].cuda())
-            criterion_action = nn.CrossEntropyLoss(weight=dataset_Train.getWeights()[1].cuda())
+            criterion_offence_severity = nn.CrossEntropyLoss(
+            weight=dataset_Train.getWeights()[0].cuda(),
+            label_smoothing=0.1
+            )
+            criterion_action = nn.CrossEntropyLoss(
+            weight=dataset_Train.getWeights()[1].cuda(),
+            label_smoothing=0.1
+            )
             criterion = [criterion_offence_severity, criterion_action]
         else:
             criterion_offence_severity = nn.CrossEntropyLoss()

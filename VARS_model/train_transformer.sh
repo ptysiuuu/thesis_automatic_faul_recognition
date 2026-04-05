@@ -25,4 +25,5 @@ python main.py \
   --max_num_worker 15 \
   --step_size 20 \
   --gamma 0.5 \
-  --max_epochs 60
+  --max_epochs 60 \
+  --weight_decay 0.01
