@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=12:00:00
+#SBATCH --time=8:00:00
 #SBATCH --output=transformer_results_part2.log
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
@@ -27,4 +27,4 @@ python main.py \
   --gamma 0.5 \
   --max_epochs 60 \
   --weighted_loss "Yes" \
-  --path_to_model_weights "models/VARS/5/mvit_v2_s/0.0001/_B4_F16_S_G0.5_Step20/16_model.pth.tar"
+  --path_to_model_weights "models/VARS/5/mvit_v2_s/0.0001/_B4_F16_S_G0.5_Step20/14_model.pth.tar"
