@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=12:00:00
+#SBATCH --time=09:00:00
 #SBATCH --output=transformer_results_part3.log
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
