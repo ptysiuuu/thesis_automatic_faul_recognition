@@ -24,4 +24,6 @@ datasets/
 
 *.pth.tar
 models/
+__pycache__/VARS_model/VARS/
 __pycache__/
+*.pyc
