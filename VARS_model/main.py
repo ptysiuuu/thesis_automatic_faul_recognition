@@ -124,7 +124,6 @@ def main(*args):
             transforms.RandomRotation(degrees=5),
             transforms.ColorJitter(brightness=0.5, saturation=0.5, contrast=0.5),
             transforms.RandomHorizontalFlip(),
-            transforms.RandomErasing(p=0.3, scale=(0.02, 0.2)),   # ← add
         ])
     else:
         transformAug = None

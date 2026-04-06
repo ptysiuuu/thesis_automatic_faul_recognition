@@ -2,8 +2,9 @@ from utils import batch_tensor, unbatch_tensor
 import torch
 from torch import nn
 
+
 class TransformerAggregate(nn.Module):
-    def __init__(self, model, feat_dim, num_layers=2, num_heads=8, lifting_net=nn.Sequential()):
+    def __init__(self, model, feat_dim, num_layers=1, num_heads=4, lifting_net=nn.Sequential()):
         super().__init__()
         self.model = model
         self.lifting_net = lifting_net
@@ -16,7 +17,7 @@ class TransformerAggregate(nn.Module):
         self.view_embeds = nn.Parameter(torch.zeros(1, 5, feat_dim))
 
         # 3. Transformer Encoder
-        encoder_layer = nn.TransformerEncoderLayer(d_model=feat_dim, nhead=num_heads, batch_first=True)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=feat_dim, nhead=num_heads, batch_first=True, dropout=0.1, dim_feedforward=feat_dim)
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         nn.init.trunc_normal_(self.cls_token, std=0.02)
@@ -68,23 +69,18 @@ class MVAggregate(nn.Module):
 
         self.fc_offence = nn.Sequential(
             nn.LayerNorm(feat_dim),
-            nn.Dropout(p=0.3),
             nn.Linear(feat_dim, feat_dim),
-            nn.Dropout(p=0.3),
             nn.Linear(feat_dim, 4)
         )
 
         self.fc_action = nn.Sequential(
             nn.LayerNorm(feat_dim),
-            nn.Dropout(p=0.3),
             nn.Linear(feat_dim, feat_dim),
-            nn.Dropout(p=0.3),
             nn.Linear(feat_dim, 8)
         )
 
         self.inter = nn.Sequential(
             nn.LayerNorm(feat_dim),
-            nn.Dropout(p=0.2),
             nn.Linear(feat_dim, feat_dim),
             nn.Linear(feat_dim, feat_dim),
         )
