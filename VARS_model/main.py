@@ -18,6 +18,21 @@ from torchvision.models.video import mvit_v2_s, MViT_V2_S_Weights, mvit_v1_b, MV
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="torchvision")
 
+
+class FocalLoss(nn.Module):
+    def __init__(self, weight=None, gamma=2.0):
+        super().__init__()
+        self.weight = weight
+        self.gamma = gamma
+
+    def forward(self, inputs, targets):
+        ce = nn.functional.cross_entropy(
+            inputs, targets, weight=self.weight, reduction='none'
+        )
+        pt = torch.exp(-ce)
+        return ((1 - pt) ** self.gamma * ce).mean()
+
+
 def checkArguments():
 
     # args.num_views
@@ -234,19 +249,16 @@ def main(*args):
 
 
         if weighted_loss == 'Yes':
-            criterion_offence_severity = nn.CrossEntropyLoss(
-            weight=dataset_Train.getWeights()[0].cuda(),
-            label_smoothing=0.1
+            criterion_offence_severity = FocalLoss(
+                weight=dataset_Train.getWeights()[0].cuda(), gamma=2.0
             )
-            criterion_action = nn.CrossEntropyLoss(
-            weight=dataset_Train.getWeights()[1].cuda(),
-            label_smoothing=0.1
+            criterion_action = FocalLoss(
+                weight=dataset_Train.getWeights()[1].cuda(), gamma=2.0
             )
-            criterion = [criterion_offence_severity, criterion_action]
         else:
-            criterion_offence_severity = nn.CrossEntropyLoss()
-            criterion_action = nn.CrossEntropyLoss()
-            criterion = [criterion_offence_severity, criterion_action]
+            criterion_offence_severity = FocalLoss(gamma=2.0)
+            criterion_action = FocalLoss(gamma=2.0)
+        criterion = [criterion_offence_severity, criterion_action]
 
 
     # Start training or evaluation

@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=VARS_Transformer
+#SBATCH --job-name=VARS_step2_focal
 #SBATCH --partition=plgrid-gpu-a100
 #SBATCH --account=plggolemml26-gpu-a100
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=09:00:00
-#SBATCH --output=transformer_results_part3.log
+#SBATCH --time=12:00:00
+#SBATCH --output=step2_focal.log
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate vars
@@ -26,4 +26,5 @@ python main.py \
   --step_size 20 \
   --gamma 0.5 \
   --max_epochs 60 \
-  --weight_decay 0.001
+  --weight_decay 0.001 \
+  --model_name "VARS_step2_focal"
