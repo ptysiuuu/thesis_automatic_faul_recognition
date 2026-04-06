@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --time=12:00:00
-#SBATCH --output=transformer_results_part2.log
+#SBATCH --output=transformer_results_part3.log
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate vars

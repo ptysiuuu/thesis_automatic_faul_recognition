@@ -40,7 +40,7 @@ def trainer(train_loader,
             model_name,
             path_dataset,
             max_epochs=1000,
-            patience=6
+            patience=5
             ):
 
     logging.info("start training")
