@@ -27,4 +27,4 @@ python main.py \
   --gamma 0.5 \
   --max_epochs 60 \
   --weight_decay 0.001 \
-  --model_name "VARS_step2_focal"
+  --model_name "VARS_step3_moddrop"

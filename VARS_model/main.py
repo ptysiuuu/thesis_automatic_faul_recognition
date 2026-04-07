@@ -249,15 +249,17 @@ def main(*args):
 
 
         if weighted_loss == 'Yes':
-            criterion_offence_severity = FocalLoss(
-                weight=dataset_Train.getWeights()[0].cuda(), gamma=2.0
+            criterion_offence_severity = nn.CrossEntropyLoss(
+                weight=dataset_Train.getWeights()[0].cuda(),
+                label_smoothing=0.1
             )
-            criterion_action = FocalLoss(
-                weight=dataset_Train.getWeights()[1].cuda(), gamma=2.0
+            criterion_action = nn.CrossEntropyLoss(
+                weight=dataset_Train.getWeights()[1].cuda(),
+                label_smoothing=0.1
             )
         else:
-            criterion_offence_severity = FocalLoss(gamma=2.0)
-            criterion_action = FocalLoss(gamma=2.0)
+            criterion_offence_severity = nn.CrossEntropyLoss(label_smoothing=0.1)
+            criterion_action = nn.CrossEntropyLoss(label_smoothing=0.1)
         criterion = [criterion_offence_severity, criterion_action]
 
 
