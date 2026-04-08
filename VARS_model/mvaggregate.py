@@ -69,13 +69,17 @@ class MVAggregate(nn.Module):
 
         self.fc_offence = nn.Sequential(
             nn.LayerNorm(feat_dim),
+            nn.Dropout(p=0.3),
             nn.Linear(feat_dim, feat_dim),
+            nn.Dropout(p=0.3),
             nn.Linear(feat_dim, 4)
         )
 
         self.fc_action = nn.Sequential(
             nn.LayerNorm(feat_dim),
+            nn.Dropout(p=0.3),
             nn.Linear(feat_dim, feat_dim),
+            nn.Dropout(p=0.3),
             nn.Linear(feat_dim, 8)
         )
 

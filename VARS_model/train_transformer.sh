@@ -17,9 +17,9 @@ python main.py \
   --pooling_type "transformer" \
   --pre_model "mvit_v2_s" \
   --path "/net/tscratch/people/plgaszos/SoccerNet_Data" \
-  --start_frame 50 \
-  --end_frame 100 \
-  --fps 8 \
+  --start_frame 63 \
+  --end_frame 87 \
+  --fps 17 \
   --batch_size 4 \
   --only_evaluation 3 \
   --max_num_worker 15 \
@@ -27,4 +27,4 @@ python main.py \
   --gamma 0.5 \
   --max_epochs 60 \
   --weight_decay 0.001 \
-  --model_name "VARS_step4_wider"
+  --model_name "VARS_step5_dropout"
