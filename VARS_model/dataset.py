@@ -153,11 +153,6 @@ class MultiViewDataset(Dataset):
 
         if len(processed_views) == 0:
             return self.__getitem__(random.randint(0, self.length - 1))
-        # modality dropout
-        if self.split == 'Train' and len(processed_views) > 1:
-            surviving = [v for v in processed_views if random.random() > 0.2]
-            if len(surviving) > 0:
-                processed_views = surviving
 
         videos = torch.stack(processed_views, dim=0)
 
