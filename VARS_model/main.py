@@ -220,18 +220,14 @@ def main(*args):
 
     if only_evaluation == 3:
 
-        # Rozdzielamy parametry na sieć bazową (backbone) i nową głowę (agregację + klasyfikatory)
-        backbone_params = []
-        head_params = []
         for name, param in model.named_parameters():
-            if "aggregation_model" in name or "fc_" in name or "inter" in name:
-                head_params.append(param)
-            else:
-                backbone_params.append(param)
+            if "aggregation_model" not in name and "fc_" not in name and "inter" not in name:
+                param.requires_grad = False
+        logging.info("Backbone frozen for first 10 epochs")
 
         # Ustawiamy Learning Rate dla backbone na 10x mniejszy niż dla nowej głowy
+        head_params = [p for n, p in model.named_parameters() if p.requires_grad]
         optimizer = torch.optim.AdamW([
-            {'params': backbone_params, 'lr': LR * 0.1},
             {'params': head_params, 'lr': LR}
         ], betas=(0.9, 0.999), eps=1e-07, weight_decay=weight_decay, amsgrad=False)
 

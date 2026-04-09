@@ -40,7 +40,7 @@ def trainer(train_loader,
             model_name,
             path_dataset,
             max_epochs=1000,
-            patience=5
+            patience=8
             ):
 
     logging.info("start training")
@@ -48,6 +48,15 @@ def trainer(train_loader,
     best_val = 0.0
     no_improve = 0
     for epoch in range(epoch_start, max_epochs):
+
+        if epoch == 10:
+            backbone_params = []
+            for name, param in model.named_parameters():
+                if "aggregation_model" not in name and "fc_" not in name and "inter" not in name:
+                    param.requires_grad = True
+                    backbone_params.append(param)
+            optimizer.add_param_group({'params': backbone_params, 'lr': 1e-5})
+            logging.info("Backbone unfrozen at epoch 10")
 
         print(f"Epoch {epoch+1}/{max_epochs}")
 
