@@ -6,6 +6,8 @@ from config.classes import INVERSE_EVENT_DICTIONARY
 import json
 from SoccerNet.Evaluation.MV_FoulRecognition import evaluate
 from tqdm import tqdm
+# Importujemy nową funkcję z pliku rules.py
+from rules import rule_loss_with_stats
 
 def _decode_predictions(preds_sev, preds_act, actions, action_ids):
     """Wspólna logika dekodowania predykcji dla batcha."""
@@ -49,7 +51,7 @@ def trainer(train_loader,
     no_improve = 0
     for epoch in range(epoch_start, max_epochs):
 
-        if epoch == 10:
+        if epoch == 5:
             backbone_params = []
             for name, param in model.named_parameters():
                 if "aggregation_model" not in name and "fc_" not in name and "inter" not in name:
@@ -58,7 +60,7 @@ def trainer(train_loader,
             optimizer.add_param_group({'params': backbone_params, 'lr': 1e-5})
             logging.info("Backbone unfrozen at epoch 10")
 
-        print(f"Epoch {epoch+1}/{max_epochs}")
+        print(f"\nEpoch {epoch+1}/{max_epochs}")
 
         pbar = tqdm(total=len(train_loader), desc="Training", position=0, leave=True)
 
@@ -76,7 +78,7 @@ def trainer(train_loader,
         )
 
         results = evaluate(os.path.join(path_dataset, "Train", "annotations.json"), prediction_file)
-        print("TRAINING")
+        print("TRAINING RESULTS")
         print(results)
 
         ###################### VALIDATION ###################
@@ -92,10 +94,10 @@ def trainer(train_loader,
         )
 
         results = evaluate(os.path.join(path_dataset, "Valid", "annotations.json"), prediction_file)
-        print("VALIDATION")
+        print("VALIDATION RESULTS")
         print(results)
 
-        # Po ewaluacji validacji:
+        # Early stopping logic
         val_leaderboard = results.get('leaderboard_value', 0)
         if val_leaderboard > best_val:
             best_val = val_leaderboard
@@ -126,24 +128,24 @@ def trainer(train_loader,
         )
 
         results = evaluate(os.path.join(path_dataset, "Test", "annotations.json"), prediction_file)
-        print("TEST")
+        print("TEST RESULTS")
         print(results)
 
         scheduler.step()
-
         counter += 1
 
-        if counter >= 1:
-            state = {
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'scheduler': scheduler.state_dict()
-            }
-            path_aux = os.path.join(best_model_path, str(epoch + 1) + "_model.pth.tar")
-            torch.save(state, path_aux)
+        # Zapisywanie checkpointów co epokę
+        state = {
+            'epoch': epoch + 1,
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'scheduler': scheduler.state_dict()
+        }
+        path_aux = os.path.join(best_model_path, str(epoch + 1) + "_model.pth.tar")
+        torch.save(state, path_aux)
 
-    pbar.close()
+    if 'pbar' in locals():
+        pbar.close()
     return
 
 
@@ -167,6 +169,9 @@ def train(dataloader,
     loss_total_offence_severity = 0
     total_loss = 0
 
+    # Inicjalizacja statystyk reguł dla epoki
+    epoch_rule_stats = {'R1': 0, 'R2_3': 0, 'R5': 0}
+
     if not os.path.isdir(model_name):
         os.mkdir(model_name)
 
@@ -186,22 +191,33 @@ def train(dataloader,
 
         outputs_offence_severity, outputs_action, _ = model(mvclips)
 
-        # Ujednolicona ścieżka dla batch_size=1 i >1
+        # Dekodowanie predykcji
         preds_sev = torch.argmax(outputs_offence_severity.detach().cpu(), dim=1)
         preds_act = torch.argmax(outputs_action.detach().cpu(), dim=1)
         _decode_predictions(preds_sev, preds_act, actions, action)
 
-        # Zabezpieczenie przed outputem 1D przy batch_size=1
+        # Zabezpieczenie przed wymiarami przy batch_size=1
         if outputs_offence_severity.dim() == 1:
             outputs_offence_severity = outputs_offence_severity.unsqueeze(0)
         if outputs_action.dim() == 1:
             outputs_action = outputs_action.unsqueeze(0)
 
+        # Obliczanie podstawowego loss
         loss_offence_severity = criterion[0](outputs_offence_severity, targets_offence_severity)
         loss_action = criterion[1](outputs_action, targets_action)
         loss = loss_offence_severity + loss_action
 
+        # Obliczanie Rule-Guided Loss i zbieranie statystyk naruszeń
+        r_loss, batch_stats = rule_loss_with_stats(outputs_offence_severity, outputs_action, weight=0.3)
+
+        # Akumulacja statystyk naruszeń dla raportu epoki
+        epoch_rule_stats['R1'] += batch_stats['R1_Dive_Violation']
+        epoch_rule_stats['R2_3'] += batch_stats['R2_3_Violent_LowSev']
+        epoch_rule_stats['R5'] += batch_stats['R5_RedCard_MildAction']
+
         if train:
+            # Podczas treningu dodajemy r_loss do głównej funkcji celu
+            loss = loss + r_loss
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -209,6 +225,13 @@ def train(dataloader,
         loss_total_action += float(loss_action)
         loss_total_offence_severity += float(loss_offence_severity)
         total_loss += 1
+
+    # Wyświetlanie statystyk naruszeń reguł po przejściu całego zbioru
+    print(f"\n--- {set_name.upper()} RULE VIOLATIONS (Epoch {epoch}) ---")
+    print(f"Rule 1 (Dive + Offence): {epoch_rule_stats['R1']}")
+    print(f"Rule 2/3 (HighLeg/Elbow + Low Severity): {epoch_rule_stats['R2_3']}")
+    print(f"Rule 5 (Red Card + Holding/Pushing): {epoch_rule_stats['R5']}")
+    print("------------------------------------------")
 
     gc.collect()
     torch.cuda.empty_cache()
@@ -241,7 +264,6 @@ def evaluation(dataloader,
         mvclips = mvclips.cuda().float()
         outputs_offence_severity, outputs_action, _ = model(mvclips)
 
-        # Ujednolicona ścieżka identyczna jak w train()
         preds_sev = torch.argmax(outputs_offence_severity.detach().cpu(), dim=1)
         preds_act = torch.argmax(outputs_action.detach().cpu(), dim=1)
         _decode_predictions(preds_sev, preds_act, actions, action)
