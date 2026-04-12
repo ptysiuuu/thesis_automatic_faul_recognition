@@ -51,6 +51,58 @@ class TransformerAggregate(nn.Module):
 
         return output, None # None zamiast wag uwagi dla kompatybilności z resztą kodu
 
+
+class CrossAttentionAggregate(nn.Module):
+    def __init__(self, model, feat_dim, num_heads=4, lifting_net=nn.Sequential()):
+        super().__init__()
+        self.model = model
+        self.lifting_net = lifting_net
+
+        # Cross-attention: Q=main cam, K/V=replays
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=feat_dim,
+            num_heads=num_heads,
+            dropout=0.1,
+            batch_first=True
+        )
+        self.norm = nn.LayerNorm(feat_dim)
+
+    def forward(self, mvimages):
+        B, V, C, D, H, W = mvimages.shape
+
+        # Ekstrakcja cech przez backbone
+        aux = self.lifting_net(
+            unbatch_tensor(
+                self.model(batch_tensor(mvimages, dim=1, squeeze=True)),
+                B, dim=1, unsqueeze=True
+            )
+        )  # [B, V, feat_dim]
+
+        # Rozdziel main camera i replaye
+        main_cam = aux[:, 0:1, :]      # [B, 1, feat_dim] — clip_0 jako Query
+        replays  = aux[:, 1:,  :]      # [B, V-1, feat_dim] — clip_1+ jako K/V
+
+        # Maska brakujących replayów (wyzerowane tensory)
+        replay_mask = (mvimages[:, 1:, :].abs().sum(dim=(2, 3, 4, 5)) == 0)  # [B, V-1]
+
+        # Jeśli wszystkie replaye brakują — fallback do main cam
+        if replay_mask.all():
+            return self.norm(main_cam.squeeze(1)), None
+
+        # Cross-attention: main cam patrzy na replaye
+        attn_out, attn_weights = self.cross_attn(
+            query=main_cam,           # [B, 1, feat_dim]
+            key=replays,              # [B, V-1, feat_dim]
+            value=replays,
+            key_padding_mask=replay_mask  # ignoruj brakujące replaye
+        )  # attn_out: [B, 1, feat_dim]
+
+        # Residual connection: main cam + wyciągnięte detale z replayów
+        output = self.norm(main_cam + attn_out)  # [B, 1, feat_dim]
+
+        return output.squeeze(1), attn_weights  # [B, feat_dim]
+
+
 class ViewMaxAggregate(nn.Module):
     def __init__(self, model, lifting_net=nn.Sequential()):
         super().__init__()
@@ -93,8 +145,14 @@ class MVAggregate(nn.Module):
             self.aggregation_model = ViewMaxAggregate(model=model, lifting_net=lifting_net)
         elif self.agr_type == "transformer":
             self.aggregation_model = TransformerAggregate(model=model, feat_dim=feat_dim, lifting_net=lifting_net)
+        elif self.agr_type == "crossattn":
+            self.aggregation_model = CrossAttentionAggregate(
+                model=model,
+                feat_dim=feat_dim,
+                num_heads=4,
+                lifting_net=lifting_net
+            )
         else:
-            # Domyślnie używamy Twojego poprzedniego WeightedAggregate jeśli chcesz
             from mvaggregate import WeightedAggregate
             self.aggregation_model = WeightedAggregate(model=model, feat_dim=feat_dim, lifting_net=lifting_net)
 

@@ -48,7 +48,7 @@ def checkArguments():
         exit()
 
     # args.pooling_type
-    if args.pooling_type not in ['max', 'mean', 'attention', 'transformer']:
+    if args.pooling_type not in ['max', 'mean', 'attention', 'transformer', 'crossattn']:
         print("Could not find your desired argument for --args.pooling_type:")
         print("Possible arguments are: max, mean, attention, transformer")
         exit()

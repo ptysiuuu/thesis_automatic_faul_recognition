@@ -14,7 +14,7 @@ conda activate vars
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_model
 
 python main.py \
-  --pooling_type "transformer" \
+  --pooling_type "crossattn" \
   --pre_model "mvit_v2_s" \
   --path "/net/tscratch/people/plgaszos/SoccerNet_Data" \
   --start_frame 63 \
@@ -27,4 +27,4 @@ python main.py \
   --gamma 0.5 \
   --max_epochs 60 \
   --weight_decay 0.001 \
-  --model_name "VARS_step10"
+  --model_name "VARS_crossattn"

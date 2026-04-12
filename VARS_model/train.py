@@ -217,7 +217,7 @@ def train(dataloader,
 
         if train:
             # Podczas treningu dodajemy r_loss do głównej funkcji celu
-            loss = loss + r_loss
+            # loss = loss + r_loss disable rules loss
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
