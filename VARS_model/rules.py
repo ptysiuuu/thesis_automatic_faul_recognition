@@ -7,7 +7,7 @@ ACTION_PUSHING  = 4
 ACTION_ELBOWING = 5
 ACTION_DIVE     = 7
 
-def rule_loss_with_stats(logits_severity, logits_action, weight=0.3):
+def rule_loss_with_stats(logits_severity, logits_action, weight=0.05):
     prob_sev = torch.softmax(logits_severity, dim=1)
     prob_act = torch.softmax(logits_action, dim=1)
 

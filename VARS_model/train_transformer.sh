@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --time=12:00:00
-#SBATCH --output=step7.log
+#SBATCH --output=step10.log
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate vars
@@ -27,4 +27,4 @@ python main.py \
   --gamma 0.5 \
   --max_epochs 60 \
   --weight_decay 0.001 \
-  --model_name "VARS_step7"
+  --model_name "VARS_step10"
