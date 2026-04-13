@@ -7,6 +7,7 @@
 *.weights
 *.pb
 *.onnx
+*.tar
 
 # Katalogi z wynikami i logami
 runs/
