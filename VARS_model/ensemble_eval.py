@@ -8,6 +8,7 @@ from model import MVNetwork
 from torchvision.models.video import MViT_V2_S_Weights
 from SoccerNet.Evaluation.MV_FoulRecognition import evaluate
 from config.classes import INVERSE_EVENT_DICTIONARY
+import torch.nn as nn
 
 # ── Ścieżki do wag ──────────────────────────────────────────
 PATH_BASELINE = "models/VARS/5/mvit_v2_s/0.0001/_B2_F16_S_G0.1_Step3/baseline_model.pth.tar"
@@ -26,6 +27,24 @@ test_loader = DataLoader(dataset_Test, batch_size=1, shuffle=False, num_workers=
 
 # Ładuj oba modele
 model_max = MVNetwork(net_name='mvit_v2_s', agr_type='attention').cuda()
+
+# --- REKONSTRUKCJA STAREJ GŁOWY Z TWOJEGO ORYGINALNEGO KODU ---
+feat_dim = 400 # Wymiar ze starych wag
+
+model_max.mvnetwork.fc_offence = nn.Sequential(
+    nn.LayerNorm(feat_dim),          # warstwa 0
+    nn.Linear(feat_dim, feat_dim),   # warstwa 1
+    nn.Linear(feat_dim, 4)           # warstwa 2
+).cuda()
+
+model_max.mvnetwork.fc_action = nn.Sequential(
+    nn.LayerNorm(feat_dim),          # warstwa 0
+    nn.Linear(feat_dim, feat_dim),   # warstwa 1
+    nn.Linear(feat_dim, 8)           # warstwa 2
+).cuda()
+# -------------------------------------------------------------
+
+# Teraz stare wagi z .tar załadują się idealnie:
 model_max.load_state_dict(torch.load(PATH_BASELINE)['state_dict'])
 model_max.eval()
 
