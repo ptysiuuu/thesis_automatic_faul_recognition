@@ -12,7 +12,7 @@ import torch.nn as nn
 
 # ── Ścieżki do wag ──────────────────────────────────────────
 PATH_BASELINE = "models/VARS/5/mvit_v2_s/0.0001/_B2_F16_S_G0.1_Step3/baseline_model.tar"
-PATH_TRANSFORMER = "models/VARS_step8/5/mvit_v2_s/0.0001/_B4_F16_S_G0.5_Step20/best_model.tar"
+PATH_TRANSFORMER = "models/VARS_step8/5/mvit_v2_s/0.0001/_B4_F16_S_G0.5_Step20/best_model.pth.tar"
 PATH_DATA = "/net/tscratch/people/plgaszos/SoccerNet_Data"
 # ────────────────────────────────────────────────────────────
 
