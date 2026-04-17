@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 logging.getLogger("torchvision").setLevel(logging.ERROR)
 
 HDF5_ROOT = "/net/tscratch/people/plgaszos/SoccerNet_HDF5"
-
+TARGET_FRAMES = 16
 
 class MultiViewDataset(Dataset):
     def __init__(self, path, start, end, fps, split, num_views, transform=None, transform_model=None):
@@ -101,6 +101,14 @@ class MultiViewDataset(Dataset):
         final_frames = self.transform_model(final_frames)
         final_frames = final_frames.permute(1, 0, 2, 3)  # [C, T, H, W]
 
+        C, T, H, W = final_frames.shape
+        if T != TARGET_FRAMES:
+            final_frames = final_frames.unsqueeze(0)  # [1, C, T, H, W]
+            final_frames = torch.nn.functional.interpolate(
+                final_frames, size=(TARGET_FRAMES, H, W),
+                mode='trilinear', align_corners=False
+            ).squeeze(0)  # [C, TARGET_FRAMES, H, W]
+
         return final_frames
 
     def _process_clip_video(self, clip_path):
@@ -133,6 +141,14 @@ class MultiViewDataset(Dataset):
 
         final_frames = self.transform_model(final_frames)
         final_frames = final_frames.permute(1, 0, 2, 3)
+
+        C, T, H, W = final_frames.shape
+        if T != TARGET_FRAMES:
+            final_frames = final_frames.unsqueeze(0)
+            final_frames = torch.nn.functional.interpolate(
+                final_frames, size=(TARGET_FRAMES, H, W),
+                mode='trilinear', align_corners=False
+            ).squeeze(0)
 
         return final_frames
 

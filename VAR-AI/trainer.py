@@ -3,8 +3,9 @@ import json
 import torch
 import logging
 from tqdm import tqdm
-from rules import rule_loss_with_stats # Skopiuj z VARS_model
-from config.classes import INVERSE_EVENT_DICTIONARY
+from SoccerNet.Evaluation.MV_FoulRecognition import evaluate
+from rules import rule_loss_with_stats
+from metrics import VARMetrics
 
 
 class VAR_Trainer:
@@ -15,8 +16,10 @@ class VAR_Trainer:
         self.crit_sev, self.crit_act = criterions
         self.device = device
         self.config = config
+        self.dataset_path = config['dataset_path']
+        self.model_name = config.get('model_name', 'VAR-AI')
 
-    def fit(self, train_loader, val_loader, test_loader, metrics_obj):
+    def fit(self, train_loader, val_loader, test_loader):
         best_lb = 0.0
         epochs_no_improve = 0
         patience = self.config.get('patience', 8)
@@ -25,28 +28,37 @@ class VAR_Trainer:
             print(f"\n{'='*20} EPOKA {epoch}/{self.config['epochs']} {'='*20}")
 
             rule_stats = self.train_epoch(train_loader, epoch)
-            print(f"Trening - Naruszenia reguł: R1: {rule_stats['R1']}, R2/3: {rule_stats['R2_3']}, R5: {rule_stats['R5']}")
+            print(f"Naruszenia reguł: R1={rule_stats['R1']}, R2/3={rule_stats['R2_3']}, R5={rule_stats['R5']}")
 
-            val_results = self.validate(val_loader, metrics_obj)
-            val_lb = val_results['Leaderboard Value']
-            print(f"Walidacja - Leaderboard Value: {val_lb:.4f} | Acc Action: {val_results['Balanced Accuracy (Action)']:.4f} | Acc Sev: {val_results['Balanced Accuracy (Severity)']:.4f}")
+            # Walidacja
+            val_pred_file = self.evaluate_split(val_loader, "valid", epoch)
+            val_results = evaluate(
+                os.path.join(self.dataset_path, "Valid", "annotations.json"),
+                val_pred_file
+            )
+            val_lb = val_results['leaderboard_value']
+            print(f"VALIDATION: {val_results}")
 
             if val_lb > best_lb:
+                prev_best = best_lb
                 best_lb = val_lb
                 epochs_no_improve = 0
-                torch.save(self.model.state_dict(), "best_var_model.pth")
-                print(f"--> Zapisano nowy najlepszy model! (Wzrost z {best_lb:.4f} do {val_lb:.4f})")
+                torch.save(self.model.state_dict(),
+                           os.path.join(self.model_name, "best_model.pth"))
+                print(f"--> Nowy najlepszy model! ({prev_best:.4f} → {best_lb:.4f})")
             else:
                 epochs_no_improve += 1
-                print(f"Brak poprawy od {epochs_no_improve} epok (cierpliwość: {patience}).")
-
                 if epochs_no_improve >= patience:
-                    print(f"\n[!] Wczesne zatrzymanie (Early Stopping) aktywowane w epoce {epoch}.")
-                    print(f"Najlepszy wynik Leaderboard: {best_lb:.4f}")
+                    print(f"Early stopping w epoce {epoch}. Najlepszy LB: {best_lb:.4f}")
                     break
 
-            test_results = self.validate(test_loader, metrics_obj)
-            print(f"Test - Leaderboard Value: {test_results['Leaderboard Value']:.4f}")
+            # Test
+            test_pred_file = self.evaluate_split(test_loader, "test", epoch)
+            test_results = evaluate(
+                os.path.join(self.dataset_path, "Test", "annotations.json"),
+                test_pred_file
+            )
+            print(f"TEST: {test_results}")
 
             self.scheduler.step()
 
@@ -56,16 +68,28 @@ class VAR_Trainer:
         pbar = tqdm(loader, desc=f"Epoch {epoch} [Train]")
 
         for tar_sev, tar_act, clips, _ in pbar:
-            tar_sev, tar_act, clips = tar_sev.to(self.device), tar_act.to(self.device), clips.float().to(self.device)
+            tar_sev = tar_sev.to(self.device)
+            tar_act = tar_act.to(self.device)
+            clips   = clips.float().to(self.device)
 
             out_sev, out_act, _ = self.model(clips)
+
+            if out_sev.dim() == 1:
+                out_sev = out_sev.unsqueeze(0)
+            if out_act.dim() == 1:
+                out_act = out_act.unsqueeze(0)
+
             loss = self.crit_sev(out_sev, tar_sev) + self.crit_act(out_act, tar_act)
 
-            r_loss, batch_stats = rule_loss_with_stats(out_sev, out_act, weight=self.config['rule_weight'])
-            for k in rule_stats: rule_stats[k] += batch_stats.get(k, 0)
+            r_loss, batch_stats = rule_loss_with_stats(
+                out_sev, out_act, weight=self.config['rule_weight']
+            )
+            rule_stats['R1']   += batch_stats.get('R1_Dive_Violation', 0)
+            rule_stats['R2_3'] += batch_stats.get('R2_3_Violent_LowSev', 0)
+            rule_stats['R5']   += batch_stats.get('R5_RedCard_MildAction', 0)
 
             if self.config['rule_weight'] > 0:
-                loss += r_loss
+                loss = loss + r_loss
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -74,11 +98,19 @@ class VAR_Trainer:
         return rule_stats
 
     @torch.no_grad()
-    def validate(self, loader, metrics_obj):
+    def evaluate_split(self, loader, set_name, epoch):
         self.model.eval()
-        metrics_obj.reset()
-        for tar_sev, tar_act, clips, _ in loader:
-            tar_sev, tar_act, clips = tar_sev.to(self.device), tar_act.to(self.device), clips.float().to(self.device)
+        metrics = VARMetrics()
+
+        for tar_sev, tar_act, clips, action_ids in loader:
+            clips = clips.float().to(self.device)
             out_sev, out_act, _ = self.model(clips)
-            metrics_obj.update(out_sev, out_act, tar_sev, tar_act)
-        return metrics_obj.compute()
+
+            if out_sev.dim() == 1:
+                out_sev = out_sev.unsqueeze(0)
+            if out_act.dim() == 1:
+                out_act = out_act.unsqueeze(0)
+
+            metrics.update(out_sev, out_act, action_ids)
+
+        return metrics.save(set_name, self.model_name)

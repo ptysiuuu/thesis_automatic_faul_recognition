@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import os
 from torchvision import transforms
 from dataset import MultiViewDataset
 from transformers import VideoMAEImageProcessor
@@ -57,9 +58,9 @@ def main():
 
     config.update({
         'dataset_path': '/net/tscratch/people/plgaszos/SoccerNet_Data',
-        'start_frame': 0,
-        'end_frame': 125,
-        'fps': 25,
+        'start_frame': 63,
+		'end_frame': 87,
+		'fps': 17,
         'num_views': 5,
         'num_workers': 16,
         'batch_size': 4
@@ -83,6 +84,7 @@ def main():
         nn.CrossEntropyLoss(weight=weights_sev.to(device), label_smoothing=0.1),
         nn.CrossEntropyLoss(weight=weights_act.to(device), label_smoothing=0.1)
     ]
+    os.makedirs(config['model_name'], exist_ok=True)
     trainer = VAR_Trainer(model, optimizer, scheduler, criterions, device, config)
 
     dataset_valid = MultiViewDataset(
@@ -131,7 +133,7 @@ def main():
         pin_memory=True
     )
 
-    trainer.fit(train_loader, val_loader, test_loader, metrics)
+    trainer.fit(train_loader, val_loader, test_loader)
 
     print(f"Liczba trenowalnych parametrów: {sum(p.numel() for p in trainable_params) / 1e6:.2f} M")
     print("VAR-AI gotowy do pracy z VideoMAE V2.")

@@ -1,30 +1,31 @@
-import torch
-import numpy as np
-from sklearn.metrics import balanced_accuracy_score
+from config.classes import INVERSE_EVENT_DICTIONARY
 
 class VARMetrics:
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.all_preds_act = []
-        self.all_targets_act = []
-        self.all_preds_sev = []
-        self.all_targets_sev = []
+        self.actions = {}
 
-    def update(self, out_sev, out_act, tar_sev, tar_act):
-        self.all_preds_sev.extend(torch.argmax(out_sev, dim=1).cpu().numpy())
-        self.all_targets_sev.extend(torch.argmax(tar_sev, dim=1).cpu().numpy())
-        self.all_preds_act.extend(torch.argmax(out_act, dim=1).cpu().numpy())
-        self.all_targets_act.extend(torch.argmax(tar_act, dim=1).cpu().numpy())
+    def update(self, out_sev, out_act, action_ids):
+        import torch
+        preds_sev = torch.argmax(out_sev.detach().cpu(), dim=1)
+        preds_act = torch.argmax(out_act.detach().cpu(), dim=1)
 
-    def compute(self):
-        bal_acc_act = balanced_accuracy_score(self.all_targets_act, self.all_preds_act)
-        bal_acc_sev = balanced_accuracy_score(self.all_targets_sev, self.all_preds_sev)
-        lb_value = (bal_acc_act + bal_acc_sev) / 2
+        for i in range(len(action_ids)):
+            sev = preds_sev[i].item()
+            values = {
+                "Action class": INVERSE_EVENT_DICTIONARY["action_class"][preds_act[i].item()],
+                "Offence": "No offence" if sev == 0 else "Offence",
+                "Severity": ["", "1.0", "3.0", "5.0"][sev]
+            }
+            self.actions[action_ids[i]] = values
 
-        return {
-            "Balanced Accuracy (Action)": bal_acc_act,
-            "Balanced Accuracy (Severity)": bal_acc_sev,
-            "Leaderboard Value": lb_value
-        }
+    def save(self, set_name, model_name="VAR-AI"):
+        import os, json
+        os.makedirs(model_name, exist_ok=True)
+        data = {"Set": set_name, "Actions": self.actions}
+        path = os.path.join(model_name, f"predictions_{set_name}.json")
+        with open(path, "w") as f:
+            json.dump(data, f)
+        return path

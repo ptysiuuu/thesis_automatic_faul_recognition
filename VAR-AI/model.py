@@ -87,23 +87,21 @@ class MVNetworkV2(nn.Module):
         )
 
     def extract_features(self, video):
-        B, T, C, H, W = video.shape
+        B, C, T, H, W = video.shape
 
         if T != 16:
-            video_for_interp = video.permute(0, 2, 1, 3, 4)
+            video = torch.nn.functional.interpolate(
+                video, size=(16, H, W),
+                mode='trilinear', align_corners=False
+            )  # nadal [B, C, 16, H, W]
 
-            video_interp = torch.nn.functional.interpolate(
-                video_for_interp, size=(16, H, W), mode='trilinear', align_corners=False
-            )
-
-            pixel_values = video_interp.permute(0, 2, 1, 3, 4)
-        else:
-            pixel_values = video
+        # VideoMAE oczekuje [B, T, C, H, W]
+        pixel_values = video.permute(0, 2, 1, 3, 4)  # [B, 16, C, H, W]
 
         with torch.no_grad():
             outputs = self.backbone(pixel_values=pixel_values)
 
-        features = outputs.last_hidden_state.mean(dim=1)
+        features = outputs.last_hidden_state.mean(dim=1)  # [B, 768]
         return features
 
     def forward(self, mvimages):
