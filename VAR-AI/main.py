@@ -44,7 +44,6 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config['epochs'])
 
     metrics = VARMetrics()
-    trainer = VAR_Trainer(model, optimizer, scheduler, criterions, device, config)
 
     transform_aug = transforms.Compose([
         transforms.RandomAffine(degrees=(0, 0), translate=(0.1, 0.1), scale=(0.9, 1)),
@@ -83,6 +82,7 @@ def main():
         nn.CrossEntropyLoss(weight=weights_sev.to(device), label_smoothing=0.1),
         nn.CrossEntropyLoss(weight=weights_act.to(device), label_smoothing=0.1)
     ]
+    trainer = VAR_Trainer(model, optimizer, scheduler, criterions, device, config)
 
     dataset_valid = MultiViewDataset(
         path=config['dataset_path'],
