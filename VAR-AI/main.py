@@ -7,8 +7,7 @@ from transformers import VideoMAEImageProcessor
 from torch.utils.data import DataLoader
 
 from model import MVNetworkV2
-from trainer import VAR_Trainer # Ten sam plik trainer.py co poprzednio (obsługujący Rule Loss)
-from metrics import VARMetrics
+from trainer import VAR_Trainer
 
 
 def get_videomae_transforms():
@@ -44,8 +43,6 @@ def main():
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config['epochs'])
 
-    metrics = VARMetrics()
-
     transform_aug = transforms.Compose([
         transforms.RandomAffine(degrees=(0, 0), translate=(0.1, 0.1), scale=(0.9, 1)),
         transforms.RandomPerspective(distortion_scale=0.3, p=0.5),
@@ -58,6 +55,7 @@ def main():
 
     config.update({
         'dataset_path': '/net/tscratch/people/plgaszos/SoccerNet_Data',
+        'model_name': 'VAR-AI-VideoMAE',
         'start_frame': 63,
 		'end_frame': 87,
 		'fps': 17,

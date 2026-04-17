@@ -184,7 +184,6 @@ class MultiViewDataset(Dataset):
             videos = torch.cat((videos, padding), dim=0)
 
         videos = videos[:self.num_views]
-        videos = videos.permute(0, 2, 1, 3, 4)
 
         if self.split != 'Chall':
             return (
