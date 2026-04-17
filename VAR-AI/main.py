@@ -61,7 +61,8 @@ def main():
         'end_frame': 125,
         'fps': 25,
         'num_views': 5,
-        'num_workers': 16
+        'num_workers': 16,
+        'batch_size': 4
     })
 
     print("Ładowanie datasetów...")
