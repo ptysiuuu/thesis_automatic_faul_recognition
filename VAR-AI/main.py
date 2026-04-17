@@ -56,7 +56,7 @@ def main():
     transform_model = get_videomae_transforms()
 
     config.update({
-        'dataset_path': '/net/tscratch/people/plgaszos/SoccerNet_HDF5',
+        'dataset_path': '/net/tscratch/people/plgaszos/SoccerNet_Data',
         'start_frame': 0,
         'end_frame': 125,
         'fps': 25,
