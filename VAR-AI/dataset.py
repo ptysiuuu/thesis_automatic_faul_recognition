@@ -126,7 +126,7 @@ class MultiViewDataset(Dataset):
         if final_frames is None:
             return None
 
-        final_frames = final_frames.permute(0, 3, 1, 2)
+        final_frames = final_frames.permute(0, 3, 1, 2).float() / 255.0
 
         if self.transform is not None:
             final_frames = self.transform(final_frames)
