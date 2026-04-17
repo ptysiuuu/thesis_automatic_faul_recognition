@@ -15,6 +15,7 @@ def rule_loss_with_stats(logits_severity, logits_action, weight=0.05):
     stats = {}
 
     with torch.no_grad():
+        # Progi do uznania, że model "wybrał" daną klasę
         pred_sev = torch.argmax(prob_sev, dim=1)
         pred_act = torch.argmax(prob_act, dim=1)
 
