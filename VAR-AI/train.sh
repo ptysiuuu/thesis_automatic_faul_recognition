@@ -14,6 +14,6 @@ source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate vars
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VAR-AI
 
-pip install transformers --quiet
+pip install "transformers==4.36.0" --quiet
 
 python main.py
