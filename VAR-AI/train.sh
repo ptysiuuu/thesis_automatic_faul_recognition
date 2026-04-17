@@ -12,7 +12,7 @@
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate vars
-source venv/bin/activate
+cd /net/tscratch/people/plgaszos/sn-mvfoul/VAR-AI
 
 pip install transformers --quiet
 
