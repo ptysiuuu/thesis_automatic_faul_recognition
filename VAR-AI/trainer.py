@@ -93,6 +93,10 @@ class VAR_Trainer:
 
             self.optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in self.model.parameters() if p.requires_grad],
+                max_norm=1.0
+            )
             self.optimizer.step()
 
         return rule_stats

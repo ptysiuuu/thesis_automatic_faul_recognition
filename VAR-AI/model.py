@@ -19,33 +19,33 @@ class CrossAttentionAggregator(nn.Module):
         nn.init.trunc_normal_(self.view_embeds, std=0.02)
 
     def forward(self, features, view_mask):
-        # features: [B, V, feat_dim]
         B, V, D = features.shape
-
-        # Dodanie view embeddings
         features = features + self.view_embeds[:, :V, :]
 
-        main_cam = features[:, 0:1, :]   # [B, 1, D] — Query (Główna kamera)
-        replays  = features[:, 1:,  :]   # [B, V-1, D] — Key/Value (Powtórki)
+        main_cam = features[:, 0:1, :]
+        replays = features[:, 1:, :]
+        replay_mask = view_mask[:, 1:]  # [B, V-1]
 
-        replay_mask = view_mask[:, 1:]   # Maska brakujących powtórek [B, V-1]
+        all_missing_per_sample = replay_mask.all(dim=1)  # [B]
 
-        # Sprawdzenie, czy wszystkie powtórki dla danego batcha są puste
-        all_missing = replay_mask.all(dim=1)  # [B]
+        # Napraw maskę — dla sampli bez replayów odblokuj pierwszy slot
+        # żeby uniknąć softmax(-inf) = NaN w attention
+        fixed_mask = replay_mask.clone()
+        fixed_mask[all_missing_per_sample, 0] = False  # ← kluczowa linia
 
         attn_out, _ = self.cross_attn(
             query=main_cam,
             key=replays,
             value=replays,
-            key_padding_mask=replay_mask
+            key_padding_mask=fixed_mask  # ← używaj fixed_mask
         )
 
-        output = self.norm(main_cam + attn_out).squeeze(1)  # [B, D]
+        output = self.norm(main_cam + attn_out).squeeze(1)
 
-        # Fallback: Dla sampli bez żadnych powtórek — użyj samej main cam
+        # Teraz torch.where działa poprawnie — brak NaN
         main_only = self.norm(main_cam.squeeze(1))
         output = torch.where(
-            all_missing.unsqueeze(1).expand_as(output),
+            all_missing_per_sample.unsqueeze(1).expand_as(output),
             main_only,
             output
         )

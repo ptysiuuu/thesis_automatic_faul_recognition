@@ -23,7 +23,7 @@ def get_videomae_transforms():
 
 def main():
     config = {
-        'rule_weight': 0.05,
+        'rule_weight': 0.00,
         'lr': 1e-4,
         'weight_decay': 0.001,
         'epochs': 50
