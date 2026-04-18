@@ -87,7 +87,7 @@ class TransformerAggregate(nn.Module):
         # --- view-quality gating ---
         quality = self.quality_gate(aux)                          # [B, V, 1]
         quality = quality.masked_fill(view_mask.unsqueeze(-1), 0.0)
-        aux = aux * quality                                        # scale by quality
+        aux = aux * (0.5 + quality)                                    # scale by quality
 
         # Add view embeddings and prepend [CLS]
         aux = aux + self.view_embeds[:, :V, :]

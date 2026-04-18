@@ -221,7 +221,7 @@ def main(args):
     # --- training setup ---
     # Freeze backbone initially; only aggregation + classification heads train
     for name, param in model.named_parameters():
-        if "aggregation_model" not in name and "fc_" not in name and "inter" not in name:
+        if "aggregation_model.model." not in name and "fc_" not in name and "inter" not in name:
             param.requires_grad = False
     logging.info("Backbone frozen for first 5 epochs")
 

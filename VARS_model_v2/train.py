@@ -108,6 +108,11 @@ class EMA:
         self.shadow = d['shadow']
         self.decay  = d['decay']
 
+    def register_new(self):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad and name not in self.shadow:
+                self.shadow[name] = param.data.clone()
+
 
 # ---------------------------------------------------------------------------
 # Prediction decoding
@@ -137,33 +142,12 @@ def _decode_predictions(preds_sev, preds_act, actions, action_ids):
 # TTA helper
 # ---------------------------------------------------------------------------
 
-def _run_with_tta(model, mvclips, n_tta=4):
-    """
-    Run model with Test-Time Augmentation and return averaged logits.
-    Augmentations: original + horizontal flip  (+ optionally repeated with
-    a small temporal shift if n_tta >= 4, but temporal shift requires
-    re-loading data, so we default to 2 passes here).
-
-    Returns: (sev_logits, act_logits)  averaged over TTA passes.
-    """
-    results_sev, results_act = [], []
-
-    # Pass 1: original
-    out = model(mvclips)
-    results_sev.append(out[0])
-    results_act.append(out[1])
-
-    # Pass 2: horizontal flip (flip width dimension — last dim of video tensor)
-    # mvclips shape: [B, V, C, T, H, W]
-    flipped = mvclips.flip(-1)
-    out_f = model(flipped)
-    results_sev.append(out_f[0])
-    results_act.append(out_f[1])
-
-    # Average
-    avg_sev = torch.stack(results_sev, dim=0).mean(dim=0)
-    avg_act = torch.stack(results_act, dim=0).mean(dim=0)
-    return avg_sev, avg_act
+def _run_with_tta(model, mvclips):
+    o1 = model(mvclips)
+    o2 = model(mvclips.flip(-1))
+    sev = (o1[0] + o2[0]) / 2
+    act = (o1[1] + o2[1]) / 2
+    return sev, act, o1[2], o1[3], o1[4], o1[5]
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +182,7 @@ def trainer(
         if epoch == 5:
             backbone_params = [
                 p for n, p in model.named_parameters()
-                if "aggregation_model" not in n and "fc_" not in n
+                if "aggregation_model.model." not in n and "fc_" not in n
                    and "inter" not in n and not p.requires_grad
             ]
             for p in backbone_params:
@@ -206,7 +190,7 @@ def trainer(
             if backbone_params:
                 optimizer.add_param_group({'params': backbone_params, 'lr': 1e-5})
             # Register newly unfrozen params with EMA
-            ema._register()
+            ema.register_new()
             logging.info("Backbone unfrozen at epoch 5 with LR=1e-5")
 
         print(f"\nEpoch {epoch + 1}/{max_epochs}")

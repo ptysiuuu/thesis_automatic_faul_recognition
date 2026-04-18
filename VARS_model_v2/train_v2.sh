@@ -9,7 +9,7 @@
 #SBATCH --time=16:00:00
 #SBATCH --output=VAR-AI_VideoMAE_%j.out
 
-DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet"   # adjust as needed
+DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet"
 
 python main.py \
     --path          "$DATASET_PATH" \
