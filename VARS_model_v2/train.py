@@ -178,20 +178,18 @@ def trainer(
 
     for epoch in range(epoch_start, max_epochs):
 
-        # Unfreeze backbone at epoch 5
+        # Unfreeze backbone at epoch 5 with 10× smaller LR (discriminative fine-tuning)
         if epoch == 5:
             backbone_params = [
                 p for n, p in model.named_parameters()
-                if "aggregation_model.model." not in n and "fc_" not in n
-                   and "inter" not in n and not p.requires_grad
+                if "aggregation_model.model." in n and not p.requires_grad
             ]
             for p in backbone_params:
                 p.requires_grad = True
             if backbone_params:
                 optimizer.add_param_group({'params': backbone_params, 'lr': 1e-5})
-            # Register newly unfrozen params with EMA
             ema.register_new()
-            logging.info("Backbone unfrozen at epoch 5 with LR=1e-5")
+            logging.info(f"Backbone unfrozen at epoch 5 — {len(backbone_params)} param groups added at LR=1e-5")
 
         print(f"\nEpoch {epoch + 1}/{max_epochs}")
         pbar = tqdm(total=len(train_loader), desc="Training", leave=True)

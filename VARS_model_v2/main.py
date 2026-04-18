@@ -18,8 +18,36 @@ from torchvision.models.video import (
     R2Plus1D_18_Weights, S3D_Weights,
     MViT_V2_S_Weights, MViT_V1_B_Weights,
 )
+from model import HF_VIDEOMAE_REGISTRY
 
 warnings.filterwarnings("ignore", category=UserWarning, module="torchvision")
+
+_TORCHVISION_MODELS = {
+    "r3d_18", "mc3_18", "r2plus1d_18", "s3d", "mvit_v2_s", "mvit_v1_b",
+}
+_ALL_MODELS = _TORCHVISION_MODELS | set(HF_VIDEOMAE_REGISTRY.keys())
+
+
+# ---------------------------------------------------------------------------
+# VideoMAE normalisation transform
+# Applied to [T, C, H, W] float tensors in [0, 1] — same interface as
+# the torchvision VideoTransform objects returned by Weight.transforms().
+# VideoMAEv1/v2 pretraining uses mean=std=0.5 (not ImageNet stats).
+# ---------------------------------------------------------------------------
+class VideoMAETransform:
+    def __init__(self, size: int = 224):
+        self.resize    = transforms.Resize(size, antialias=True)
+        self.crop      = transforms.CenterCrop(size)
+        self.normalize = transforms.Normalize(
+            mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]
+        )
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [T, C, H, W]  values in [0, 1]
+        x = self.resize(x)
+        x = self.crop(x)
+        x = self.normalize(x)
+        return x
 
 
 # ---------------------------------------------------------------------------
@@ -35,6 +63,8 @@ def checkArguments(args):
         raise ValueError("--pooling_type must be one of: max, attention, transformer, crossattn")
     if args.weighted_loss not in ('Yes', 'No'):
         raise ValueError("--weighted_loss must be 'Yes' or 'No'")
+    if args.pre_model not in _ALL_MODELS:
+        raise ValueError(f"--pre_model must be one of: {sorted(_ALL_MODELS)}")
     if not (0 <= args.start_frame <= 124):
         raise ValueError("--start_frame must be 0-124")
     if not (1 <= args.end_frame <= 125):
@@ -111,13 +141,16 @@ def main(args):
         transformAug = None
 
     # --- backbone-specific transforms ---
+    _videomae_transform = VideoMAETransform(size=224)
     _transform_map = {
-        "r3d_18":     R3D_18_Weights.KINETICS400_V1.transforms(),
-        "mc3_18":     MC3_18_Weights.KINETICS400_V1.transforms(),
-        "r2plus1d_18": R2Plus1D_18_Weights.KINETICS400_V1.transforms(),
-        "s3d":        S3D_Weights.KINETICS400_V1.transforms(),
-        "mvit_v2_s":  MViT_V2_S_Weights.KINETICS400_V1.transforms(),
-        "mvit_v1_b":  MViT_V1_B_Weights.KINETICS400_V1.transforms(),
+        "r3d_18":          R3D_18_Weights.KINETICS400_V1.transforms(),
+        "mc3_18":          MC3_18_Weights.KINETICS400_V1.transforms(),
+        "r2plus1d_18":     R2Plus1D_18_Weights.KINETICS400_V1.transforms(),
+        "s3d":             S3D_Weights.KINETICS400_V1.transforms(),
+        "mvit_v2_s":       MViT_V2_S_Weights.KINETICS400_V1.transforms(),
+        "mvit_v1_b":       MViT_V1_B_Weights.KINETICS400_V1.transforms(),
+        # VideoMAEv1 / VideoMAEv2 — use mean=std=0.5 normalisation
+        **{k: _videomae_transform for k in HF_VIDEOMAE_REGISTRY},
     }
     transforms_model = _transform_map.get(pre_model, R2Plus1D_18_Weights.KINETICS400_V1.transforms())
 
@@ -219,11 +252,13 @@ def main(args):
         return 0
 
     # --- training setup ---
-    # Freeze backbone initially; only aggregation + classification heads train
+    # Freeze only the backbone (aggregation_model.model.*).
+    # All other params — aggregation head, quality gate, transformer encoder,
+    # classification heads — start trainable at LR.
     for name, param in model.named_parameters():
-        if "aggregation_model.model." not in name and "fc_" not in name and "inter" not in name:
+        if "aggregation_model.model." in name:
             param.requires_grad = False
-    logging.info("Backbone frozen for first 5 epochs")
+    logging.info("Backbone frozen for first 5 epochs (aggregation_model.model.*)")
 
     head_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(
