@@ -14,25 +14,25 @@ source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate vars
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_model_v2
 python main.py \
-    --path          "$DATASET_PATH" \
-    --pre_model     mvit_v2_s \
-    --pooling_type  transformer \
-    --batch_size    4 \
-    --LR            1e-4 \
-    --weight_decay  1e-3 \
-    --max_epochs    40 \
-    --patience      8 \
-    --num_views     5 \
-    --fps           25 \
-    --start_frame   0 \
-    --end_frame     125 \
-    --data_aug      Yes \
-    --weighted_loss Yes \
+    --path             "$DATASET_PATH" \
+    --pre_model        videomae2_base \
+    --pooling_type     transformer \
+    --batch_size       4 \
+    --LR               1e-4 \
+    --weight_decay     1e-3 \
+    --max_epochs       40 \
+    --patience         8 \
+    --num_views        5 \
+    --fps              17 \
+    --start_frame      63 \
+    --end_frame        87 \
+    --data_aug         Yes \
+    --weighted_loss    Yes \
     --balanced_sampler Yes \
-    --aux_weight    0.2 \
-    --ema_decay     0.999 \
+    --aux_weight       0.2 \
+    --ema_decay        0.999 \
     --use_tta \
-    --model_name    VARS_v2 \
-    --GPU           0 \
-    --max_num_worker 4 \
-    --only_evaluation 3
+    --model_name       VARS_v2_MAE2base \
+    --GPU              0 \
+    --max_num_worker   4 \
+    --only_evaluation  3
