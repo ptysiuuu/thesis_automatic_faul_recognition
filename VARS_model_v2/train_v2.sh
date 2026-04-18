@@ -9,7 +9,7 @@
 #SBATCH --time=16:00:00
 #SBATCH --output=VAR-AI_VideoMAE_%j.out
 
-DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet"
+DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate vars
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_model_v2
