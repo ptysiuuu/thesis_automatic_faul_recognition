@@ -10,7 +10,9 @@
 #SBATCH --output=VAR-AI_VideoMAE_%j.out
 
 DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet"
-
+source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
+conda activate vars
+cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_model_v2
 python main.py \
     --path          "$DATASET_PATH" \
     --pre_model     mvit_v2_s \
