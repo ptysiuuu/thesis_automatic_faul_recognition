@@ -67,15 +67,17 @@ class VideoMAEv2Backbone(nn.Module):
         self.fc = nn.Sequential()     # stub so MVNetwork can do network.fc = ...
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, C, T, H, W)
-        B, C, T, H, W = x.shape
-        if T != self.pretrained_frames:
-            x = F.interpolate(
-                x, size=(self.pretrained_frames, H, W),
-                mode='trilinear', align_corners=False,
-            )
-        # Custom model takes (B, C, T, H, W) and returns pooled (B, hidden_size)
-        return self.backbone(x)
+       print(f"[backbone] input shape: {x.shape}")
+       # If someone passed us (B, T, C, H, W) instead of (B, C, T, H, W)
+       # Heuristic: channel dim should be 3 for RGB.
+       if x.shape[1] != 3 and x.shape[2] == 3:
+           x = x.permute(0, 2, 1, 3, 4).contiguous()
+       B, C, T, H, W = x.shape
+       assert C == 3, f"Expected 3 channels, got shape {x.shape}"
+       if T != self.pretrained_frames:
+           x = F.interpolate(x, size=(self.pretrained_frames, H, W),
+                             mode='trilinear', align_corners=False)
+       return self.backbone(x)
 
 
 # ---------------------------------------------------------------------------

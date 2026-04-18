@@ -74,6 +74,7 @@ class TransformerAggregate(nn.Module):
         nn.init.trunc_normal_(self.view_embeds, std=0.02)
 
     def forward(self, mvimages):
+        print(f"[aggregator] mvimages shape: {mvimages.shape}")
         B, V, C, D, H, W = mvimages.shape
 
         # Extract per-view features via shared backbone
