@@ -317,13 +317,8 @@ def _train_epoch(
 
             # --- forward ---
             if not train and use_tta:
-                out_sev, out_act = _run_with_tta(model, mvclips)
-                # For aux heads we just run once (TTA on primaries is enough)
-                full_out = model(mvclips)
-                out_contact     = full_out[2]
-                out_bodypart    = full_out[3]
-                out_try_to_play = full_out[4]
-                out_handball    = full_out[5]
+                out_sev, out_act, out_contact, out_bodypart, out_try_to_play, out_handball = \
+                    _run_with_tta(model, mvclips)
             else:
                 full_out = model(mvclips)
                 out_sev, out_act = full_out[0], full_out[1]
@@ -395,7 +390,7 @@ def evaluation(dataloader, model, ema=None, set_name="test", use_tta=True):
             action_ids = batch[7]
 
             if use_tta:
-                out_sev, out_act = _run_with_tta(model, mvclips)
+                out_sev, out_act, *_ = _run_with_tta(model, mvclips)
             else:
                 out = model(mvclips)
                 out_sev, out_act = out[0], out[1]
