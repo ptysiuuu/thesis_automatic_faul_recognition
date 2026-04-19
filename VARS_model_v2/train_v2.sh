@@ -15,10 +15,9 @@ conda activate vars
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_model_v2
 python main.py \
     --path             "$DATASET_PATH" \
-    --pre_model        videomae2_base \
+    --pre_model        mvit_v2_s \
     --pooling_type     transformer \
-    --batch_size       2 \
-	--accum_steps      2 \
+    --batch_size       4 \
     --LR               1e-4 \
     --weight_decay     1e-3 \
     --max_epochs       40 \
@@ -37,5 +36,3 @@ python main.py \
     --GPU              0 \
     --max_num_worker   4 \
     --only_evaluation  3
-	--continue_training \
-	--path_to_model_weights models/VARS_v2_MAE2base/5/videomae2_base/0.0001/_B4_F16_G0.1_Step3/5_model.pth.tar \
