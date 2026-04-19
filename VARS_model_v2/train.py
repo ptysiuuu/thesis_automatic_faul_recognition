@@ -171,6 +171,7 @@ def trainer(
     patience=8,
     aux_weight=0.2,
     use_tta=True,
+    accum_steps=1
 ):
     logging.info("start training")
     best_val = 0.0
@@ -198,7 +199,7 @@ def trainer(
         pred_file, loss_act, loss_sev = _train_epoch(
             train_loader, model, optimizer, criterion, ema,
             epoch + 1, model_name, train=True, set_name="train",
-            aux_weight=aux_weight, pbar=pbar,
+            aux_weight=aux_weight, pbar=pbar, accum_steps=accum_steps,
         )
         results = evaluate(os.path.join(path_dataset, "Train", "annotations.json"), pred_file)
         print("TRAINING RESULTS:", results)
@@ -277,6 +278,7 @@ def _train_epoch(
     aux_weight=0.2,
     use_tta=False,
     pbar=None,
+    accum_steps=1
 ):
     if train:
         model.train()
@@ -351,11 +353,12 @@ def _train_epoch(
             total_loss = loss_sev + loss_act + aux_weight * loss_aux
 
             if train:
-                optimizer.zero_grad()
-                total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                optimizer.step()
-                ema.update()
+                (total_loss / accum_steps).backward()
+                if (n_batches + 1) % accum_steps == 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    ema.update()
 
             loss_total_sev += loss_sev.item()
             loss_total_act += loss_act.item()

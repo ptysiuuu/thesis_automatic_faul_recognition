@@ -314,6 +314,7 @@ def main(args):
         patience=args.patience,
         aux_weight=aux_weight,
         use_tta=use_tta,
+        accum_steps=args.accum_steps,
     )
     return 0
 
@@ -368,6 +369,8 @@ if __name__ == '__main__':
                         help='3=train | 0=test | 1=chall | 2=test+chall')
     parser.add_argument('--path_to_model_weights', default='', type=str)
     parser.add_argument('--continue_training', action='store_true')
+    parser.add_argument('--accum_steps', default=2, type=int,
+                    help='Gradient accumulation steps (effective batch = batch_size * accum_steps)')
 
     args = parser.parse_args()
     checkArguments(args)

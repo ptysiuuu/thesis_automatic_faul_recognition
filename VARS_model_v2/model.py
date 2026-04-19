@@ -62,12 +62,12 @@ class VideoMAEv2Backbone(nn.Module):
         self.backbone = AutoModel.from_pretrained(
             hf_model_id, config=config, trust_remote_code=True
         )
+        self.backbone.model.with_cp = True
         self.feat_dim = hidden_size
         self.pretrained_frames = 16   # VideoMAEv2 is fixed at 16 frames
         self.fc = nn.Sequential()     # stub so MVNetwork can do network.fc = ...
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-       print(f"[backbone] input shape: {x.shape}")
        # If someone passed us (B, T, C, H, W) instead of (B, C, T, H, W)
        # Heuristic: channel dim should be 3 for RGB.
        if x.shape[1] != 3 and x.shape[2] == 3:
