@@ -16,10 +16,12 @@ class WeightedAggregate(nn.Module):
         self.relu = nn.ReLU()
 
     def forward(self, mvimages):
-        B, V, C, D, H, W = mvimages.shape
+        B, V, *_ = mvimages.shape
         aux = self.lifting_net(
             unbatch_tensor(self.model(batch_tensor(mvimages, dim=1, squeeze=True)), B, dim=1, unsqueeze=True)
-        )
+        )  # [B, V, feat_dim] or [B, V, T', feat_dim]
+        if aux.dim() == 4:
+            aux = aux.mean(dim=2)   # temporal mean-pool → [B, V, feat_dim]
 
         aux = torch.matmul(aux, self.attention_weights)
         aux_t = aux.permute(0, 2, 1)
@@ -36,27 +38,29 @@ class WeightedAggregate(nn.Module):
 
 class TransformerAggregate(nn.Module):
     """
-    TransformerAggregate with view-quality gating.
+    TransformerAggregate with view-quality gating and temporal token support.
 
-    After backbone feature extraction each view receives a scalar quality score
-    (sigmoid-activated linear projection). Features are scaled by their quality
-    before entering the transformer, so noisy / partial replay clips are
-    automatically down-weighted.
+    Handles both classic backbones (output [B*V, D] → [B, V, D]) and
+    temporal-token backbones like MViT-v2-S (output [B*V, T', D] → [B, V, T', D]).
+    In the temporal case each (view, time-step) pair becomes one sequence token,
+    giving V*T' = 5*8 = 40 tokens before the [CLS] token.
     """
 
-    def __init__(self, model, feat_dim, num_layers=1, num_heads=4, lifting_net=nn.Sequential()):
+    def __init__(self, model, feat_dim, num_layers=1, num_heads=4,
+                 lifting_net=nn.Sequential(), T_max=8):
         super().__init__()
         self.model = model
         self.lifting_net = lifting_net
         self.feat_dim = feat_dim
 
-        # [CLS] token — aggregates information from all views
+        # [CLS] token — aggregates information from all views / time-steps
         self.cls_token = nn.Parameter(torch.zeros(1, 1, feat_dim))
 
-        # Positional view embeddings (max 5 views)
-        self.view_embeds = nn.Parameter(torch.zeros(1, 5, feat_dim))
+        # Positional embeddings: one per view (max 5) and one per time-step
+        self.view_embeds     = nn.Parameter(torch.zeros(1, 5,     feat_dim))
+        self.temporal_embeds = nn.Parameter(torch.zeros(1, T_max, feat_dim))
 
-        # View-quality gating: scalar per view, learned from features
+        # View-quality gating: scalar per view, learned from mean-pooled features
         self.quality_gate = nn.Sequential(
             nn.Linear(feat_dim, feat_dim // 4),
             nn.ReLU(),
@@ -70,37 +74,53 @@ class TransformerAggregate(nn.Module):
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-        nn.init.trunc_normal_(self.cls_token, std=0.02)
-        nn.init.trunc_normal_(self.view_embeds, std=0.02)
+        nn.init.trunc_normal_(self.cls_token,      std=0.02)
+        nn.init.trunc_normal_(self.view_embeds,     std=0.02)
+        nn.init.trunc_normal_(self.temporal_embeds, std=0.02)
 
     def forward(self, mvimages):
-        B, V, C, D, H, W = mvimages.shape
+        B, V, *_ = mvimages.shape
 
-        # Extract per-view features via shared backbone
-        aux = self.lifting_net(
-            unbatch_tensor(self.model(batch_tensor(mvimages, dim=1, squeeze=True)), B, dim=1, unsqueeze=True)
-        )  # [B, V, feat_dim]
+        # --- backbone feature extraction ---
+        raw = unbatch_tensor(
+            self.model(batch_tensor(mvimages, dim=1, squeeze=True)),
+            B, dim=1, unsqueeze=True,
+        )
+        # raw: [B, V, D] for classic backbones  OR  [B, V, T', D] for MViT-v2-S
 
-        # Detect padding (zero-filled placeholder views)
-        view_mask = (mvimages.abs().sum(dim=(2, 3, 4, 5)) == 0)  # [B, V] True = padding
+        if raw.dim() == 3:                    # classic path: add dummy time axis
+            raw = self.lifting_net(raw)       # [B, V, D]
+            raw = raw.unsqueeze(2)            # [B, V, 1, D]
+        # raw is now always [B, V, T', D]
+        T = raw.shape[2]
 
-        # --- view-quality gating ---
-        quality = self.quality_gate(aux)                          # [B, V, 1]
+        # --- view padding mask ---
+        view_mask = (mvimages.abs().sum(dim=(2, 3, 4, 5)) == 0)  # [B, V] True = padded
+
+        # --- per-view quality gate (from temporal mean) ---
+        quality = self.quality_gate(raw.mean(2))                  # [B, V, 1]
         quality = quality.masked_fill(view_mask.unsqueeze(-1), 0.0)
-        aux = aux * (0.5 + quality)                                    # scale by quality
+        raw = raw * (0.5 + quality.unsqueeze(2))                  # [B, V, T', D]
 
-        # Add view embeddings and prepend [CLS]
-        aux = aux + self.view_embeds[:, :V, :]
+        # --- positional embeddings ---
+        raw = raw + self.view_embeds[:, :V, :].unsqueeze(2)       # broadcast over T'
+        raw = raw + self.temporal_embeds[:, :T, :].unsqueeze(1)   # broadcast over V
+
+        # --- flatten (view, time) → sequence ---
+        tokens = raw.flatten(1, 2)                                # [B, V*T', D]
+
+        # expand view padding mask to cover all T' tokens per view
+        pad_token_mask = (
+            view_mask.unsqueeze(2).expand(-1, -1, T).flatten(1, 2)  # [B, V*T']
+        )
+
+        # --- prepend [CLS] ---
         cls_tokens = self.cls_token.expand(B, -1, -1)
-        x = torch.cat((cls_tokens, aux), dim=1)                  # [B, V+1, feat_dim]
-
-        # Padding mask: [CLS] is never masked
+        x = torch.cat([cls_tokens, tokens], dim=1)                # [B, V*T'+1, D]
         cls_mask = torch.zeros((B, 1), dtype=torch.bool, device=mvimages.device)
-        padding_mask = torch.cat((cls_mask, view_mask), dim=1)   # [B, V+1]
+        padding_mask = torch.cat([cls_mask, pad_token_mask], dim=1)
 
         x = self.transformer(x, src_key_padding_mask=padding_mask)
-
-        # Return [CLS] state as the action representation
         return x[:, 0], None
 
 
@@ -115,10 +135,12 @@ class CrossAttentionAggregate(nn.Module):
         self.norm = nn.LayerNorm(feat_dim)
 
     def forward(self, mvimages):
-        B, V, C, D, H, W = mvimages.shape
+        B, *_ = mvimages.shape
         aux = self.lifting_net(
             unbatch_tensor(self.model(batch_tensor(mvimages, dim=1, squeeze=True)), B, dim=1, unsqueeze=True)
-        )  # [B, V, feat_dim]
+        )  # [B, V, feat_dim] or [B, V, T', feat_dim]
+        if aux.dim() == 4:
+            aux = aux.mean(dim=2)   # temporal mean-pool → [B, V, feat_dim]
 
         main_cam = aux[:, 0:1, :]
         replays = aux[:, 1:, :]
@@ -141,10 +163,12 @@ class ViewMaxAggregate(nn.Module):
         self.lifting_net = lifting_net
 
     def forward(self, mvimages):
-        B, V, C, D, H, W = mvimages.shape
+        B, *_ = mvimages.shape
         aux = self.lifting_net(
             unbatch_tensor(self.model(batch_tensor(mvimages, dim=1, squeeze=True)), B, dim=1, unsqueeze=True)
-        )
+        )  # [B, V, feat_dim] or [B, V, T', feat_dim]
+        if aux.dim() == 4:
+            aux = aux.mean(dim=2)   # temporal mean-pool → [B, V, feat_dim]
         return torch.max(aux, dim=1)[0].squeeze(), aux
 
 
