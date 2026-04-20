@@ -258,17 +258,10 @@ def main(args):
     for name, param in model.named_parameters():
         if "aggregation_model.model." in name:
             param.requires_grad = False
-    logging.info("Backbone frozen for first 5 epochs (aggregation_model.model.*)")
 
-    head_params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(
-        [{'params': head_params, 'lr': LR}],
-        betas=(0.9, 0.999), eps=1e-7,
-        weight_decay=weight_decay, amsgrad=False,
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max_epochs, eta_min=1e-6
-    )
+    head_params = [p for n, p in model.named_parameters() if p.requires_grad]
+    backbone_params = [p for n, p in model.named_parameters()
+                       if "aggregation_model.model." in n]
 
     epoch_start = 0
     ema = EMA(model, decay=ema_decay)
@@ -276,12 +269,41 @@ def main(args):
     if args.continue_training and path_to_model_weights != "":
         load = torch.load(path_to_model_weights)
         model.load_state_dict(load['state_dict'])
-        optimizer.load_state_dict(load['optimizer'])
-        scheduler.load_state_dict(load['scheduler'])
         epoch_start = load['epoch']
+
+        if epoch_start > 5:
+            for p in backbone_params:
+                p.requires_grad = True
+            optimizer = torch.optim.AdamW([
+                {'params': head_params,     'lr': LR},
+                {'params': backbone_params, 'lr': 1e-5},
+            ], betas=(0.9, 0.999), eps=1e-7, weight_decay=weight_decay)
+            logging.info(f"Resuming from epoch {epoch_start} — backbone already unfrozen")
+        else:
+            optimizer = torch.optim.AdamW(
+                [{'params': head_params, 'lr': LR}],
+                betas=(0.9, 0.999), eps=1e-7, weight_decay=weight_decay,
+            )
+
+        # Re-create EMA after requires_grad flags are finalised, then load saved state
+        ema = EMA(model, decay=ema_decay)
         if 'ema' in load:
             ema.load_state_dict(load['ema'])
-        logging.info(f"Resuming training from epoch {epoch_start}")
+
+        optimizer.load_state_dict(load['optimizer'])
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max_epochs, eta_min=1e-6
+        )
+        scheduler.load_state_dict(load['scheduler'])
+
+    else:
+        optimizer = torch.optim.AdamW(
+            [{'params': head_params, 'lr': LR}],
+            betas=(0.9, 0.999), eps=1e-7, weight_decay=weight_decay, amsgrad=False,
+        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max_epochs, eta_min=1e-6
+        )
 
     # --- loss functions ---
     if weighted_loss == 'Yes':
