@@ -193,10 +193,10 @@ class MultiViewDataset(Dataset):
         if self.fusion_mode:
             # Interleave views along time: [V, T, C, H, W] → [C, T*V, H, W]
             # At each timestep t, all V views appear consecutively.
-            V_, T_, C_, H_, W_ = videos.shape
-            fused = videos.permute(1, 0, 2, 3, 4)   # [T, V, C, H, W]
-            fused = fused.reshape(T_ * V_, C_, H_, W_)  # [T*V, C, H, W]
-            fused = fused.permute(1, 0, 2, 3)         # [C, T*V, H, W]
+            V_, C_, T_, H_, W_ = videos.shape
+            fused = videos.permute(2, 0, 1, 3, 4)
+            fused = fused.reshape(T_ * V_, C_, H_, W_)
+            fused = fused.permute(1, 0, 2, 3)
             clip_out = fused
         else:
             clip_out = videos
