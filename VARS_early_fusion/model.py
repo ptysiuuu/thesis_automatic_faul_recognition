@@ -272,8 +272,12 @@ class EarlyFusionMViT(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.shape[1] != 3 and x.shape[2] == 3:
             x = x.permute(0, 2, 1, 3, 4).contiguous()
+        # Resample fused clip to 16 frames — MViT's pooling assumes T=16
+        B, C, T, H, W = x.shape
+        if T != 16:
+            x = F.interpolate(x, size=(16, H, W), mode="trilinear", align_corners=False)
         self._base(x)
-        return self._pooled_output  # [B, 768] — no flatten needed
+        return self._pooled_output  # [B, 768]
 
 
 # ---------------------------------------------------------------------------

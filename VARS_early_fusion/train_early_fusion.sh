@@ -26,7 +26,7 @@ python main.py \
     --max_epochs       50 \
     --patience         10 \
     --num_views        5 \
-    --fps              17 \
+    --fps              4 \
     --start_frame      63 \
     --end_frame        87 \
     --data_aug         Yes \
