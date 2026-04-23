@@ -262,30 +262,18 @@ class EarlyFusionMViT(nn.Module):
 
         base = mvit_v2_s(weights=MViT_V2_S_Weights.DEFAULT)
 
-        # Find AdaptiveAvgPool3d wherever it sits in the head
-        pool_layer = None
-        for module in base.head.modules():
-            if isinstance(module, nn.AdaptiveAvgPool3d):
-                pool_layer = module
-                break
-
-        assert (
-            pool_layer is not None
-        ), f"Could not find AdaptiveAvgPool3d in base.head. Head structure: {base.head}"
-
-        def _pool_hook(module, input, output):
+        def _norm_hook(module, input, output):
+            # output: [B, 768] — already pooled by MViT before the head
             self._pooled_output = output
 
-        pool_layer.register_forward_hook(_pool_hook)
+        base.norm.register_forward_hook(_norm_hook)
         self._base = base
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [B, C, T*V, H, W]
         if x.shape[1] != 3 and x.shape[2] == 3:
             x = x.permute(0, 2, 1, 3, 4).contiguous()
         self._base(x)
-        # _pooled_output: [B, 768, 1, 1, 1]
-        return self._pooled_output.flatten(1)  # [B, 768]
+        return self._pooled_output  # [B, 768] — no flatten needed
 
 
 # ---------------------------------------------------------------------------
