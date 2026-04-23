@@ -1,6 +1,7 @@
 from utils import batch_tensor, unbatch_tensor
 import torch
 from torch import nn
+from graph import GraphBuilder, GATLayer
 
 
 class WeightedAggregate(nn.Module):
@@ -172,6 +173,85 @@ class ViewMaxAggregate(nn.Module):
         return torch.max(aux, dim=1)[0].squeeze(), aux
 
 
+class GATAggregate(nn.Module):
+    """
+    Graph Attention Network aggregation over multi-view features.
+
+    Pipeline
+    --------
+      1. Per-view backbone features  [B, V, D]  (shared weights via batch_tensor).
+      2. View-quality gating: learned scalar per view suppresses low-quality views.
+      3. Two GAT layers (residual + LayerNorm) with the chosen graph topology.
+      4. Importance-weighted readout: learned scalar per view, softmaxed, then
+         weighted sum → [B, D].
+
+    The graph topology is fixed (structured / fully_connected / replay_only) and
+    precomputed by GraphBuilder for each V so there is no per-forward overhead.
+    """
+
+    def __init__(self, model, feat_dim: int, num_heads: int = 4, num_layers: int = 2,
+                 lifting_net=nn.Sequential(), topology: str = 'structured'):
+        super().__init__()
+        self.model        = model
+        self.lifting_net  = lifting_net
+        self.feat_dim     = feat_dim
+
+        self.graph_builder = GraphBuilder(max_views=5, topology=topology)
+        self.gat_layers    = nn.ModuleList([
+            GATLayer(feat_dim, num_heads=num_heads, dropout=0.1,
+                     edge_feat_dim=GraphBuilder.EDGE_FEAT_DIM)
+            for _ in range(num_layers)
+        ])
+        self.norms = nn.ModuleList([nn.LayerNorm(feat_dim) for _ in range(num_layers)])
+
+        self.quality_gate = nn.Sequential(
+            nn.Linear(feat_dim, feat_dim // 4),
+            nn.ReLU(),
+            nn.Linear(feat_dim // 4, 1),
+            nn.Sigmoid(),
+        )
+
+        # Scalar importance score per node; softmax → weighted pooling
+        self.readout = nn.Linear(feat_dim, 1)
+
+    def forward(self, mvimages: torch.Tensor):
+        B, V, *_ = mvimages.shape
+
+        # --- backbone: shared weights across views ---
+        raw = unbatch_tensor(
+            self.model(batch_tensor(mvimages, dim=1, squeeze=True)),
+            B, dim=1, unsqueeze=True,
+        )
+        # raw: [B, V, T', D] for MViT-v2-S  OR  [B, V, D] for classic backbones
+        if raw.dim() == 4:
+            raw = raw.mean(dim=2)       # temporal mean → [B, V, D]
+        raw = self.lifting_net(raw)     # identity by default
+
+        # --- padding mask: True = view is all-zeros (absent) ---
+        view_mask = (mvimages.abs().sum(dim=tuple(range(2, mvimages.dim()))) == 0)  # [B, V]
+
+        # --- quality gate ---
+        quality = self.quality_gate(raw)                            # [B, V, 1]
+        quality = quality.masked_fill(view_mask.unsqueeze(-1), 0.0)
+        x = raw * (0.5 + quality)                                   # [B, V, D]
+
+        # --- precomputed graph for this V ---
+        adj, edge_attr = self.graph_builder.get(V)                  # [V,V], [V,V,2]
+
+        # --- GAT layers with pre-norm residual ---
+        for gat, norm in zip(self.gat_layers, self.norms):
+            x = norm(x + gat(x, adj, edge_attr, view_mask))
+
+        # --- importance-weighted readout ---
+        scores = self.readout(x).squeeze(-1)                        # [B, V]
+        scores = scores.masked_fill(view_mask, float('-inf'))
+        importance = torch.softmax(scores, dim=-1)
+        importance = torch.nan_to_num(importance, nan=0.0)
+
+        pooled = (x * importance.unsqueeze(-1)).sum(dim=1)          # [B, D]
+        return pooled, importance
+
+
 class MVAggregate(nn.Module):
     """
     Multi-view aggregation module with:
@@ -180,7 +260,8 @@ class MVAggregate(nn.Module):
       - 4 auxiliary heads      (contact, bodypart, try_to_play, handball) — BCE
     """
 
-    def __init__(self, model, agr_type="transformer", feat_dim=400, lifting_net=nn.Sequential()):
+    def __init__(self, model, agr_type="transformer", feat_dim=400,
+                 lifting_net=nn.Sequential(), graph_topology="structured"):
         super().__init__()
         self.agr_type = agr_type
 
@@ -232,6 +313,9 @@ class MVAggregate(nn.Module):
             self.aggregation_model = TransformerAggregate(model=model, feat_dim=feat_dim, lifting_net=lifting_net)
         elif agr_type == "crossattn":
             self.aggregation_model = CrossAttentionAggregate(model=model, feat_dim=feat_dim, lifting_net=lifting_net)
+        elif agr_type == "gat":
+            self.aggregation_model = GATAggregate(model=model, feat_dim=feat_dim,
+                                                  lifting_net=lifting_net, topology=graph_topology)
         else:
             self.aggregation_model = WeightedAggregate(model=model, feat_dim=feat_dim, lifting_net=lifting_net)
 

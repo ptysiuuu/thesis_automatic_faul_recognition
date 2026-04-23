@@ -59,10 +59,12 @@ def checkArguments(args):
     if args.weighted_loss not in ('Yes', 'No'):
         raise ValueError("--weighted_loss must be 'Yes' or 'No'")
     if not args.fusion_mode:
-        if args.pooling_type not in ('max', 'attention', 'transformer', 'crossattn'):
-            raise ValueError("--pooling_type must be one of: max, attention, transformer, crossattn")
+        if args.pooling_type not in ('max', 'attention', 'transformer', 'crossattn', 'gat'):
+            raise ValueError("--pooling_type must be one of: max, attention, transformer, crossattn, gat")
         if args.pre_model not in _ALL_MODELS:
             raise ValueError(f"--pre_model must be one of: {sorted(_ALL_MODELS)}")
+    if args.graph_topology not in ('structured', 'fully_connected', 'replay_only'):
+        raise ValueError("--graph_topology must be one of: structured, fully_connected, replay_only")
     if not (0 <= args.start_frame <= 124):
         raise ValueError("--start_frame must be 0-124")
     if not (1 <= args.end_frame <= 125):
@@ -101,7 +103,8 @@ def main(args):
     ema_decay    = args.ema_decay
     use_tta      = args.use_tta
     balanced_sampler = args.balanced_sampler
-    fusion_mode  = args.fusion_mode
+    fusion_mode      = args.fusion_mode
+    graph_topology   = args.graph_topology
 
     number_of_frames = int(
         (end_frame - start_frame) /
@@ -217,9 +220,11 @@ def main(args):
         backbone_prefix = "backbone._base."
         logging.info(f"Early fusion mode: EarlyFusionNetwork (num_views={num_views}, T={number_of_frames})")
     else:
-        model = MVNetwork(net_name=pre_model, agr_type=pooling_type).cuda()
+        model = MVNetwork(net_name=pre_model, agr_type=pooling_type,
+                          graph_topology=graph_topology).cuda()
         backbone_prefix = "aggregation_model.model."
-        logging.info(f"Multi-view mode: MVNetwork (backbone={pre_model}, agr={pooling_type})")
+        logging.info(f"Multi-view mode: MVNetwork (backbone={pre_model}, agr={pooling_type}, "
+                     f"topology={graph_topology if pooling_type == 'gat' else 'n/a'})")
 
     if path_to_model_weights != "":
         load = torch.load(path_to_model_weights)
@@ -362,7 +367,9 @@ if __name__ == '__main__':
     parser.add_argument('--pre_model',       default='mvit_v2_s', type=str,
                         help='Backbone for multi-view mode (ignored when --fusion_mode)')
     parser.add_argument('--pooling_type',    default='transformer', type=str,
-                        help='max | attention | transformer | crossattn (ignored when --fusion_mode)')
+                        help='max | attention | transformer | crossattn | gat (ignored when --fusion_mode)')
+    parser.add_argument('--graph_topology',  default='structured', type=str,
+                        help='structured | fully_connected | replay_only (only used when --pooling_type gat)')
 
     # Training
     parser.add_argument('--batch_size',      default=4,      type=int)

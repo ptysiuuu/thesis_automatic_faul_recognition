@@ -181,10 +181,12 @@ class MVNetwork(torch.nn.Module):
         net_name: str = "mvit_v2_s",
         agr_type: str = "transformer",
         lifting_net: nn.Module = nn.Sequential(),
+        graph_topology: str = "structured",
     ):
         super().__init__()
         self.net_name = net_name
         self.agr_type = agr_type
+        self.graph_topology = graph_topology
         self.feat_dim = 512
 
         if net_name in _VIDEOMAE_V2_KEYS:
@@ -231,6 +233,7 @@ class MVNetwork(torch.nn.Module):
             agr_type=self.agr_type,
             feat_dim=self.feat_dim,
             lifting_net=lifting_net,
+            graph_topology=self.graph_topology,
         )
 
     def forward(self, mvimages: torch.Tensor):
