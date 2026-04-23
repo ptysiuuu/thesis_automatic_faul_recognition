@@ -14,7 +14,8 @@ from tqdm import tqdm
 # Ordinal severity helpers
 # ---------------------------------------------------------------------------
 
-def ordinal_targets(labels_int, num_thresholds=3, device='cpu'):
+
+def ordinal_targets(labels_int, num_thresholds=3, device="cpu"):
     """
     Convert integer severity labels (0-3) into K-1 binary threshold targets.
       t[:,k] = 1  iff  label > k
@@ -32,7 +33,9 @@ def ordinal_loss(logits, labels_int):
     logits : (B, 3)
     labels_int : (B,) integer 0-3
     """
-    targets = ordinal_targets(labels_int, num_thresholds=logits.shape[1], device=logits.device)
+    targets = ordinal_targets(
+        labels_int, num_thresholds=logits.shape[1], device=logits.device
+    )
     return F.binary_cross_entropy_with_logits(logits, targets)
 
 
@@ -51,9 +54,9 @@ def ordinal_to_probs(logits):
     """
     p = torch.sigmoid(logits)
     B = p.shape[0]
-    ones  = torch.ones (B, 1, device=p.device)
+    ones = torch.ones(B, 1, device=p.device)
     zeros = torch.zeros(B, 1, device=p.device)
-    cum   = torch.cat([ones, p, zeros], dim=1)
+    cum = torch.cat([ones, p, zeros], dim=1)
     class_probs = (cum[:, :-1] - cum[:, 1:]).clamp(min=1e-8)
     return class_probs / class_probs.sum(dim=1, keepdim=True)
 
@@ -61,6 +64,7 @@ def ordinal_to_probs(logits):
 # ---------------------------------------------------------------------------
 # EMA (Exponential Moving Average) weight tracker
 # ---------------------------------------------------------------------------
+
 
 class EMA:
     """
@@ -101,11 +105,11 @@ class EMA:
         self.backup = {}
 
     def state_dict(self):
-        return {'shadow': self.shadow, 'decay': self.decay}
+        return {"shadow": self.shadow, "decay": self.decay}
 
     def load_state_dict(self, d):
-        self.shadow = d['shadow']
-        self.decay  = d['decay']
+        self.shadow = d["shadow"]
+        self.decay = d["decay"]
 
     def register_new(self):
         for name, param in self.model.named_parameters():
@@ -117,10 +121,15 @@ class EMA:
 # Prediction decoding
 # ---------------------------------------------------------------------------
 
+
 def _decode_predictions(preds_sev, preds_act, actions, action_ids):
+    preds_sev = preds_sev.reshape(-1)
+    preds_act = preds_act.reshape(-1)
     for i in range(len(action_ids)):
         values = {}
-        values["Action class"] = INVERSE_EVENT_DICTIONARY["action_class"][preds_act[i].item()]
+        values["Action class"] = INVERSE_EVENT_DICTIONARY["action_class"][
+            preds_act[i].item()
+        ]
         sev = preds_sev[i].item()
         if sev == 0:
             values["Offence"] = "No offence"
@@ -141,6 +150,7 @@ def _decode_predictions(preds_sev, preds_act, actions, action_ids):
 # TTA helper
 # ---------------------------------------------------------------------------
 
+
 def _run_with_tta(model, mvclips):
     o1 = model(mvclips)
     o2 = model(mvclips.flip(-1))
@@ -152,6 +162,7 @@ def _run_with_tta(model, mvclips):
 # ---------------------------------------------------------------------------
 # Trainer
 # ---------------------------------------------------------------------------
+
 
 def trainer(
     train_loader,
@@ -182,13 +193,14 @@ def trainer(
         # Unfreeze backbone at epoch 5 with 10× smaller LR (discriminative fine-tuning)
         if epoch == 5:
             backbone_params = [
-                p for n, p in model.named_parameters()
+                p
+                for n, p in model.named_parameters()
                 if backbone_prefix in n and not p.requires_grad
             ]
             for p in backbone_params:
                 p.requires_grad = True
             if backbone_params:
-                optimizer.add_param_group({'params': backbone_params, 'lr': 1e-5})
+                optimizer.add_param_group({"params": backbone_params, "lr": 1e-5})
             ema.register_new()
             logging.info(
                 f"Backbone unfrozen at epoch 5 (prefix='{backbone_prefix}') — "
@@ -200,72 +212,112 @@ def trainer(
 
         # --- Train ---
         pred_file, loss_act, loss_sev = _train_epoch(
-            train_loader, model, optimizer, criterion, ema,
-            epoch + 1, model_name, train=True, set_name="train",
-            aux_weight=aux_weight, pbar=pbar, accum_steps=accum_steps,
+            train_loader,
+            model,
+            optimizer,
+            criterion,
+            ema,
+            epoch + 1,
+            model_name,
+            train=True,
+            set_name="train",
+            aux_weight=aux_weight,
+            pbar=pbar,
+            accum_steps=accum_steps,
         )
-        results = evaluate(os.path.join(path_dataset, "Train", "annotations.json"), pred_file)
+        results = evaluate(
+            os.path.join(path_dataset, "Train", "annotations.json"), pred_file
+        )
         print("TRAINING RESULTS:", results)
 
         # --- Validation (with EMA weights) ---
         ema.apply_shadow()
         pred_file, _, _ = _train_epoch(
-            val_loader, model, optimizer, criterion, ema,
-            epoch + 1, model_name, train=False, set_name="valid",
-            aux_weight=aux_weight, use_tta=use_tta,
+            val_loader,
+            model,
+            optimizer,
+            criterion,
+            ema,
+            epoch + 1,
+            model_name,
+            train=False,
+            set_name="valid",
+            aux_weight=aux_weight,
+            use_tta=use_tta,
         )
         ema.restore()
 
-        results = evaluate(os.path.join(path_dataset, "Valid", "annotations.json"), pred_file)
+        results = evaluate(
+            os.path.join(path_dataset, "Valid", "annotations.json"), pred_file
+        )
         print("VALIDATION RESULTS:", results)
 
-        val_lb = results.get('leaderboard_value', 0)
+        val_lb = results.get("leaderboard_value", 0)
         if val_lb > best_val:
             best_val = val_lb
             no_improve = 0
-            torch.save({
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'ema': ema.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'scheduler': scheduler.state_dict(),
-            }, os.path.join(best_model_path, "best_model.pth.tar"))
+            torch.save(
+                {
+                    "epoch": epoch + 1,
+                    "state_dict": model.state_dict(),
+                    "ema": ema.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict(),
+                },
+                os.path.join(best_model_path, "best_model.pth.tar"),
+            )
             logging.info(f"New best val LB: {best_val:.4f} at epoch {epoch + 1}")
         else:
             no_improve += 1
             if no_improve >= patience:
-                logging.info(f"Early stopping at epoch {epoch + 1} (patience={patience}), best LB={best_val:.4f}")
+                logging.info(
+                    f"Early stopping at epoch {epoch + 1} (patience={patience}), best LB={best_val:.4f}"
+                )
                 break
 
         # --- Test (with EMA weights) ---
         ema.apply_shadow()
         pred_file, _, _ = _train_epoch(
-            test_loader, model, optimizer, criterion, ema,
-            epoch + 1, model_name, train=False, set_name="test",
-            aux_weight=aux_weight, use_tta=use_tta,
+            test_loader,
+            model,
+            optimizer,
+            criterion,
+            ema,
+            epoch + 1,
+            model_name,
+            train=False,
+            set_name="test",
+            aux_weight=aux_weight,
+            use_tta=use_tta,
         )
         ema.restore()
 
-        results = evaluate(os.path.join(path_dataset, "Test", "annotations.json"), pred_file)
+        results = evaluate(
+            os.path.join(path_dataset, "Test", "annotations.json"), pred_file
+        )
         print("TEST RESULTS:", results)
 
         scheduler.step()
 
-        torch.save({
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'ema': ema.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'scheduler': scheduler.state_dict(),
-        }, os.path.join(best_model_path, f"{epoch + 1}_model.pth.tar"))
+        torch.save(
+            {
+                "epoch": epoch + 1,
+                "state_dict": model.state_dict(),
+                "ema": ema.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict(),
+            },
+            os.path.join(best_model_path, f"{epoch + 1}_model.pth.tar"),
+        )
 
-    if 'pbar' in locals():
+    if "pbar" in locals():
         pbar.close()
 
 
 # ---------------------------------------------------------------------------
 # Single-epoch loop
 # ---------------------------------------------------------------------------
+
 
 def _train_epoch(
     dataloader,
@@ -280,7 +332,7 @@ def _train_epoch(
     aux_weight=0.2,
     use_tta=False,
     pbar=None,
-    accum_steps=1
+    accum_steps=1,
 ):
     if train:
         model.train()
@@ -296,33 +348,45 @@ def _train_epoch(
     loss_total_sev = 0.0
     n_batches = 0
 
-    criterion_action = criterion['action']
-    criterion_bce    = criterion['bce']
+    criterion_action = criterion["action"]
+    criterion_bce = criterion["bce"]
 
     ctx = torch.no_grad() if not train else torch.enable_grad()
 
     with ctx:
         for batch in dataloader:
-            (targets_sev, targets_act,
-             targets_contact, targets_bodypart,
-             targets_try_to_play, targets_handball,
-             mvclips, action_ids) = batch
+            (
+                targets_sev,
+                targets_act,
+                targets_contact,
+                targets_bodypart,
+                targets_try_to_play,
+                targets_handball,
+                mvclips,
+                action_ids,
+            ) = batch
 
-            targets_sev         = targets_sev.cuda()
-            targets_act         = targets_act.cuda()
-            targets_contact     = targets_contact.cuda()
-            targets_bodypart    = targets_bodypart.cuda()
+            targets_sev = targets_sev.cuda()
+            targets_act = targets_act.cuda()
+            targets_contact = targets_contact.cuda()
+            targets_bodypart = targets_bodypart.cuda()
             targets_try_to_play = targets_try_to_play.cuda()
-            targets_handball    = targets_handball.cuda()
-            mvclips             = mvclips.cuda().float()
+            targets_handball = targets_handball.cuda()
+            mvclips = mvclips.cuda().float()
 
             if pbar is not None:
                 pbar.update()
 
             # --- forward ---
             if not train and use_tta:
-                out_sev, out_act, out_contact, out_bodypart, out_try_to_play, out_handball = \
-                    _run_with_tta(model, mvclips)
+                (
+                    out_sev,
+                    out_act,
+                    out_contact,
+                    out_bodypart,
+                    out_try_to_play,
+                    out_handball,
+                ) = _run_with_tta(model, mvclips)
             else:
                 full_out = model(mvclips)
                 out_sev, out_act = full_out[0], full_out[1]
@@ -349,14 +413,14 @@ def _train_epoch(
 
             # --- losses ---
             labels_int = targets_sev.argmax(dim=1)
-            loss_sev   = ordinal_loss(out_sev, labels_int)
-            loss_act   = criterion_action(out_act, targets_act)
+            loss_sev = ordinal_loss(out_sev, labels_int)
+            loss_act = criterion_action(out_act, targets_act)
 
             loss_aux = (
-                criterion_bce(out_contact,     targets_contact)     +
-                criterion_bce(out_bodypart,    targets_bodypart)    +
-                criterion_bce(out_try_to_play, targets_try_to_play) +
-                criterion_bce(out_handball,    targets_handball)
+                criterion_bce(out_contact, targets_contact)
+                + criterion_bce(out_bodypart, targets_bodypart)
+                + criterion_bce(out_try_to_play, targets_try_to_play)
+                + criterion_bce(out_handball, targets_handball)
             ) / 4.0
 
             total_loss = loss_sev + loss_act + aux_weight * loss_aux
@@ -388,6 +452,7 @@ def _train_epoch(
 # ---------------------------------------------------------------------------
 # Inference-only evaluation (no labels required)
 # ---------------------------------------------------------------------------
+
 
 def evaluation(dataloader, model, ema=None, set_name="test", use_tta=True):
     if ema is not None:
