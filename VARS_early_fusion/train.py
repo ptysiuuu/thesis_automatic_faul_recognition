@@ -332,6 +332,13 @@ def _train_epoch(
             # --- decode predictions ---
             preds_sev = ordinal_predict(out_sev.detach().cpu())
             preds_act = torch.argmax(out_act.detach().cpu(), dim=1)
+
+            # guard: ensure both are 1D tensors
+            if preds_sev.dim() == 0:
+                preds_sev = preds_sev.unsqueeze(0)
+            if preds_act.dim() == 0:
+                preds_act = preds_act.unsqueeze(0)
+
             _decode_predictions(preds_sev, preds_act, actions, action_ids)
 
             # dim guard for batch_size=1
