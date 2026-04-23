@@ -3,12 +3,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 from mvaggregate import MVAggregate
 from torchvision.models.video import (
-    r3d_18, R3D_18_Weights,
-    mc3_18, MC3_18_Weights,
-    r2plus1d_18, R2Plus1D_18_Weights,
-    s3d, S3D_Weights,
-    mvit_v2_s, MViT_V2_S_Weights,
-    mvit_v1_b, MViT_V1_B_Weights,
+    r3d_18,
+    R3D_18_Weights,
+    mc3_18,
+    MC3_18_Weights,
+    r2plus1d_18,
+    R2Plus1D_18_Weights,
+    s3d,
+    S3D_Weights,
+    mvit_v2_s,
+    MViT_V2_S_Weights,
+    mvit_v1_b,
+    MViT_V1_B_Weights,
 )
 
 
@@ -16,20 +22,26 @@ from torchvision.models.video import (
 # HuggingFace VideoMAE registry  (key → (hf_model_id, hidden_size))
 # ---------------------------------------------------------------------------
 HF_VIDEOMAE_REGISTRY = {
-    'videomae2_base':   ('OpenGVLab/VideoMAEv2-Base',   768),
-    'videomae2_large':  ('OpenGVLab/VideoMAEv2-Large',  1024),
-    'videomae2_huge':   ('OpenGVLab/VideoMAEv2-Huge',   1280),
-    'videomae2_giant':  ('OpenGVLab/VideoMAEv2-giant',  1408),
-    'videomae_base':    ('MCG-NJU/videomae-base',       768),
-    'videomae_large':   ('MCG-NJU/videomae-large',      1024),
+    "videomae2_base": ("OpenGVLab/VideoMAEv2-Base", 768),
+    "videomae2_large": ("OpenGVLab/VideoMAEv2-Large", 1024),
+    "videomae2_huge": ("OpenGVLab/VideoMAEv2-Huge", 1280),
+    "videomae2_giant": ("OpenGVLab/VideoMAEv2-giant", 1408),
+    "videomae_base": ("MCG-NJU/videomae-base", 768),
+    "videomae_large": ("MCG-NJU/videomae-large", 1024),
 }
 
-_VIDEOMAE_V2_KEYS = {'videomae2_base', 'videomae2_large', 'videomae2_huge', 'videomae2_giant'}
+_VIDEOMAE_V2_KEYS = {
+    "videomae2_base",
+    "videomae2_large",
+    "videomae2_huge",
+    "videomae2_giant",
+}
 
 
 # ---------------------------------------------------------------------------
 # MViT-v2-S backbone — temporal token extraction (used by MVNetwork)
 # ---------------------------------------------------------------------------
+
 
 class MViTv2SBackbone(nn.Module):
     """
@@ -67,7 +79,7 @@ class MViTv2SBackbone(nn.Module):
         B, C, T, H, W = x.shape
         assert C == 3, f"Expected 3 channels, got {x.shape}"
         if T != 16:
-            x = F.interpolate(x, size=(16, H, W), mode='trilinear', align_corners=False)
+            x = F.interpolate(x, size=(16, H, W), mode="trilinear", align_corners=False)
 
         self._base(x)
         normed = self._norm_output
@@ -75,12 +87,15 @@ class MViTv2SBackbone(nn.Module):
         Tp, Hp, Wp = self._last_thw
         N_patch = Tp * Hp * Wp
         patch_tokens = normed[:, 1:] if normed.shape[1] == N_patch + 1 else normed
-        return patch_tokens.view(B, Tp, Hp, Wp, self.feat_dim).mean(dim=(2, 3))  # [B, T', 768]
+        return patch_tokens.view(B, Tp, Hp, Wp, self.feat_dim).mean(
+            dim=(2, 3)
+        )  # [B, T', 768]
 
 
 # ---------------------------------------------------------------------------
 # VideoMAEv2 backbone (OpenGVLab)
 # ---------------------------------------------------------------------------
+
 
 class VideoMAEv2Backbone(nn.Module):
     def __init__(self, hf_model_id: str, hidden_size: int):
@@ -105,14 +120,19 @@ class VideoMAEv2Backbone(nn.Module):
         B, C, T, H, W = x.shape
         assert C == 3, f"Expected 3 channels, got shape {x.shape}"
         if T != self.pretrained_frames:
-            x = F.interpolate(x, size=(self.pretrained_frames, H, W),
-                              mode='trilinear', align_corners=False)
+            x = F.interpolate(
+                x,
+                size=(self.pretrained_frames, H, W),
+                mode="trilinear",
+                align_corners=False,
+            )
         return self.backbone(x)
 
 
 # ---------------------------------------------------------------------------
 # VideoMAEv1 backbone (MCG-NJU)
 # ---------------------------------------------------------------------------
+
 
 class VideoMAEv1Backbone(nn.Module):
     def __init__(self, hf_model_id: str, hidden_size: int):
@@ -131,8 +151,10 @@ class VideoMAEv1Backbone(nn.Module):
         B, C, T, H, W = x.shape
         if T != self.pretrained_frames:
             x = F.interpolate(
-                x, size=(self.pretrained_frames, H, W),
-                mode='trilinear', align_corners=False,
+                x,
+                size=(self.pretrained_frames, H, W),
+                mode="trilinear",
+                align_corners=False,
             )
         pixel_values = x.permute(0, 2, 1, 3, 4).contiguous()
         out = self.backbone(pixel_values=pixel_values)
@@ -142,6 +164,7 @@ class VideoMAEv1Backbone(nn.Module):
 # ---------------------------------------------------------------------------
 # Standard multi-view wrapper (unchanged from VARS_model_v2)
 # ---------------------------------------------------------------------------
+
 
 class MVNetwork(torch.nn.Module):
     """
@@ -153,8 +176,12 @@ class MVNetwork(torch.nn.Module):
        try_to_play_logit [B], handball_logit [B], attention)
     """
 
-    def __init__(self, net_name: str = 'mvit_v2_s', agr_type: str = 'transformer',
-                 lifting_net: nn.Module = nn.Sequential()):
+    def __init__(
+        self,
+        net_name: str = "mvit_v2_s",
+        agr_type: str = "transformer",
+        lifting_net: nn.Module = nn.Sequential(),
+    ):
         super().__init__()
         self.net_name = net_name
         self.agr_type = agr_type
@@ -192,7 +219,9 @@ class MVNetwork(torch.nn.Module):
             self.feat_dim = 768
 
         else:
-            print(f"Warning: unknown backbone '{net_name}', falling back to r2plus1d_18")
+            print(
+                f"Warning: unknown backbone '{net_name}', falling back to r2plus1d_18"
+            )
             network = r2plus1d_18(weights=R2Plus1D_18_Weights.DEFAULT)
 
         network.fc = nn.Sequential()
@@ -211,6 +240,7 @@ class MVNetwork(torch.nn.Module):
 # ---------------------------------------------------------------------------
 # Early fusion backbone: single MViT-v2-S over all views interleaved in time
 # ---------------------------------------------------------------------------
+
 
 class EarlyFusionMViT(nn.Module):
     """
@@ -232,17 +262,21 @@ class EarlyFusionMViT(nn.Module):
 
         base = mvit_v2_s(weights=MViT_V2_S_Weights.DEFAULT)
 
-        # Sanity-check the head structure at init time
-        assert isinstance(base.head[0], nn.AdaptiveAvgPool3d), (
-            f"Expected base.head[0] to be AdaptiveAvgPool3d, got {type(base.head[0])}. "
-            "Check torchvision version."
-        )
+        # Find AdaptiveAvgPool3d wherever it sits in the head
+        pool_layer = None
+        for module in base.head.modules():
+            if isinstance(module, nn.AdaptiveAvgPool3d):
+                pool_layer = module
+                break
+
+        assert (
+            pool_layer is not None
+        ), f"Could not find AdaptiveAvgPool3d in base.head. Head structure: {base.head}"
 
         def _pool_hook(module, input, output):
-            # output: [B, 768, 1, 1, 1]
             self._pooled_output = output
 
-        base.head[0].register_forward_hook(_pool_hook)
+        pool_layer.register_forward_hook(_pool_hook)
         self._base = base
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -257,6 +291,7 @@ class EarlyFusionMViT(nn.Module):
 # ---------------------------------------------------------------------------
 # Early fusion network: single backbone + task heads, no MVAggregate
 # ---------------------------------------------------------------------------
+
 
 class EarlyFusionNetwork(nn.Module):
     """
@@ -278,23 +313,30 @@ class EarlyFusionNetwork(nn.Module):
             nn.Linear(feat_dim, feat_dim),
         )
         self.fc_ordinal_severity = nn.Sequential(
-            nn.LayerNorm(feat_dim), nn.Dropout(0.3),
-            nn.Linear(feat_dim, feat_dim // 2), nn.GELU(),
-            nn.Dropout(0.3), nn.Linear(feat_dim // 2, 3),
+            nn.LayerNorm(feat_dim),
+            nn.Dropout(0.3),
+            nn.Linear(feat_dim, feat_dim // 2),
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(feat_dim // 2, 3),
         )
         self.fc_action = nn.Sequential(
-            nn.LayerNorm(feat_dim), nn.Dropout(0.3),
-            nn.Linear(feat_dim, feat_dim), nn.Dropout(0.3),
+            nn.LayerNorm(feat_dim),
+            nn.Dropout(0.3),
+            nn.Linear(feat_dim, feat_dim),
+            nn.Dropout(0.3),
             nn.Linear(feat_dim, 8),
         )
-        self.fc_contact      = nn.Sequential(nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1))
-        self.fc_bodypart     = nn.Sequential(nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1))
-        self.fc_try_to_play  = nn.Sequential(nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1))
-        self.fc_handball     = nn.Sequential(nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1))
+        self.fc_contact = nn.Sequential(nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1))
+        self.fc_bodypart = nn.Sequential(nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1))
+        self.fc_try_to_play = nn.Sequential(
+            nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1)
+        )
+        self.fc_handball = nn.Sequential(nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1))
 
     def forward(self, fused_clip: torch.Tensor):
         # fused_clip: [B, C, T*V, H, W]
-        feat = self.backbone(fused_clip)   # [B, 768]
+        feat = self.backbone(fused_clip)  # [B, 768]
         inter = self.inter(feat)
         return (
             self.fc_ordinal_severity(inter),
