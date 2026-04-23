@@ -393,15 +393,21 @@ def _train_epoch(
                 out_contact, out_bodypart = full_out[2], full_out[3]
                 out_try_to_play, out_handball = full_out[4], full_out[5]
 
+            if out_sev.dim() == 1:
+                out_sev = out_sev.unsqueeze(0)
+            if out_act.dim() == 1:
+                out_act = out_act.unsqueeze(0)
+
             # --- decode predictions ---
             preds_sev = ordinal_predict(out_sev.detach().cpu())
             preds_act = torch.argmax(out_act.detach().cpu(), dim=1)
 
-            # guard: ensure both are 1D tensors
-            if preds_sev.dim() == 0:
-                preds_sev = preds_sev.unsqueeze(0)
-            if preds_act.dim() == 0:
-                preds_act = preds_act.unsqueeze(0)
+            preds_sev = ordinal_predict(out_sev.detach().cpu())  # [B]
+            preds_act = torch.argmax(out_act.detach().cpu(), dim=-1).reshape(-1)  # [B]
+
+            assert (
+                preds_act.max().item() <= 7
+            ), f"Invalid action class {preds_act.max().item()}, out_act shape: {out_act.shape}"
 
             _decode_predictions(preds_sev, preds_act, actions, action_ids)
 
