@@ -190,8 +190,8 @@ def trainer(
 
     for epoch in range(epoch_start, max_epochs):
 
-        # Unfreeze backbone at epoch 5 with 10× smaller LR (discriminative fine-tuning)
-        if epoch == 5:
+        # Unfreeze backbone at epoch 8 with 10× smaller LR (discriminative fine-tuning)
+        if epoch == 8:
             backbone_params = [
                 p
                 for n, p in model.named_parameters()
