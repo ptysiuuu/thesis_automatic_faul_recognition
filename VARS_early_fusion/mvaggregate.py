@@ -261,9 +261,11 @@ class MVAggregate(nn.Module):
     """
 
     def __init__(self, model, agr_type="transformer", feat_dim=400,
-                 lifting_net=nn.Sequential(), graph_topology="structured"):
+                 lifting_net=nn.Sequential(), graph_topology="structured",
+                 cascade_severity=False):
         super().__init__()
         self.agr_type = agr_type
+        self.cascade_severity = cascade_severity
 
         # Shared intermediate projection
         self.inter = nn.Sequential(
@@ -274,11 +276,13 @@ class MVAggregate(nn.Module):
         )
 
         # --- primary heads ---
-        # Ordinal severity: 3 binary thresholds (P(Y>=1), P(Y>=2), P(Y>=3))
+        # Ordinal severity: when cascade_severity=True, action logits (8-dim) are
+        # concatenated with the aggregator output before this head.
+        sev_in = feat_dim + 8 if cascade_severity else feat_dim
         self.fc_ordinal_severity = nn.Sequential(
-            nn.LayerNorm(feat_dim),
+            nn.LayerNorm(sev_in),
             nn.Dropout(p=0.3),
-            nn.Linear(feat_dim, feat_dim // 2),
+            nn.Linear(sev_in, feat_dim // 2),
             nn.GELU(),
             nn.Dropout(p=0.3),
             nn.Linear(feat_dim // 2, 3),   # 3 cumulative logits
@@ -323,8 +327,12 @@ class MVAggregate(nn.Module):
         pooled_view, attention = self.aggregation_model(mvimages)  # [B, feat_dim]
         inter = self.inter(pooled_view)                            # [B, feat_dim]
 
-        pred_ordinal_severity = self.fc_ordinal_severity(inter)    # [B, 3]
         pred_action = self.fc_action(inter)                        # [B, 8]
+        if self.cascade_severity:
+            sev_in = torch.cat([inter, pred_action], dim=-1)       # [B, feat_dim+8]
+            pred_ordinal_severity = self.fc_ordinal_severity(sev_in)
+        else:
+            pred_ordinal_severity = self.fc_ordinal_severity(inter)
         pred_contact = self.fc_contact(inter).squeeze(-1)          # [B]
         pred_bodypart = self.fc_bodypart(inter).squeeze(-1)        # [B]
         pred_try_to_play = self.fc_try_to_play(inter).squeeze(-1)  # [B]

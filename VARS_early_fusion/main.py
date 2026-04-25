@@ -11,7 +11,7 @@ from SoccerNet.Evaluation.MV_FoulRecognition import evaluate
 
 from dataset import MultiViewDataset
 from model import MVNetwork, EarlyFusionNetwork
-from train import trainer, evaluation, EMA
+from train import trainer, evaluation, EMA, UncertaintyWeighting
 from config.classes import EVENT_DICTIONARY, INVERSE_EVENT_DICTIONARY
 from torchvision.models.video import (
     R3D_18_Weights, MC3_18_Weights,
@@ -102,9 +102,12 @@ def main(args):
     aux_weight   = args.aux_weight
     ema_decay    = args.ema_decay
     use_tta      = args.use_tta
-    balanced_sampler = args.balanced_sampler
-    fusion_mode      = args.fusion_mode
-    graph_topology   = args.graph_topology
+    balanced_sampler      = args.balanced_sampler
+    fusion_mode           = args.fusion_mode
+    graph_topology        = args.graph_topology
+    cascade_severity      = args.cascade_severity
+    uncertainty_weighting = args.uncertainty_weighting
+    freeze_epoch          = args.freeze_epoch
 
     number_of_frames = int(
         (end_frame - start_frame) /
@@ -216,15 +219,19 @@ def main(args):
 
     # --- model ---
     if fusion_mode:
-        model = EarlyFusionNetwork(num_views=num_views, T_per_view=number_of_frames).cuda()
+        model = EarlyFusionNetwork(num_views=num_views, T_per_view=number_of_frames,
+                                   cascade_severity=cascade_severity).cuda()
         backbone_prefix = "backbone._base."
-        logging.info(f"Early fusion mode: EarlyFusionNetwork (num_views={num_views}, T={number_of_frames})")
+        logging.info(f"Early fusion mode: EarlyFusionNetwork (num_views={num_views}, "
+                     f"T={number_of_frames}, cascade_severity={cascade_severity})")
     else:
         model = MVNetwork(net_name=pre_model, agr_type=pooling_type,
-                          graph_topology=graph_topology).cuda()
+                          graph_topology=graph_topology,
+                          cascade_severity=cascade_severity).cuda()
         backbone_prefix = "aggregation_model.model."
         logging.info(f"Multi-view mode: MVNetwork (backbone={pre_model}, agr={pooling_type}, "
-                     f"topology={graph_topology if pooling_type == 'gat' else 'n/a'})")
+                     f"topology={graph_topology if pooling_type == 'gat' else 'n/a'}, "
+                     f"cascade_severity={cascade_severity})")
 
     if path_to_model_weights != "":
         load = torch.load(path_to_model_weights)
@@ -267,6 +274,13 @@ def main(args):
     head_params     = [p for n, p in model.named_parameters() if p.requires_grad]
     backbone_params = [p for n, p in model.named_parameters() if backbone_prefix in n]
 
+    # Uncertainty weighter — 2 learnable scalars (log-variances) trained at head LR.
+    uncertainty_weighter = None
+    if uncertainty_weighting:
+        uncertainty_weighter = UncertaintyWeighting(num_tasks=2).cuda()
+        head_params = head_params + list(uncertainty_weighter.parameters())
+        logging.info("Uncertainty weighting enabled (Kendall & Gal, 2018)")
+
     epoch_start = 0
     ema = EMA(model, decay=ema_decay)
 
@@ -275,7 +289,7 @@ def main(args):
         model.load_state_dict(load['state_dict'])
         epoch_start = load['epoch']
 
-        if epoch_start > 5:
+        if epoch_start > freeze_epoch:
             for p in backbone_params:
                 p.requires_grad = True
             optimizer = torch.optim.AdamW([
@@ -292,6 +306,8 @@ def main(args):
         ema = EMA(model, decay=ema_decay)
         if 'ema' in load:
             ema.load_state_dict(load['ema'])
+        if uncertainty_weighter is not None and 'uw' in load and load['uw'] is not None:
+            uncertainty_weighter.load_state_dict(load['uw'])
 
         optimizer.load_state_dict(load['optimizer'])
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -341,6 +357,8 @@ def main(args):
         use_tta=use_tta,
         accum_steps=args.accum_steps,
         backbone_prefix=backbone_prefix,
+        freeze_epoch=freeze_epoch,
+        uncertainty_weighter=uncertainty_weighter,
     )
     return 0
 
@@ -382,6 +400,14 @@ if __name__ == '__main__':
     parser.add_argument('--weighted_loss',   default='Yes',  type=str)
     parser.add_argument('--balanced_sampler',default='Yes',  type=str,
                         help='Use class-balanced sampler for severity (Yes/No)')
+
+    # Advanced model options
+    parser.add_argument('--cascade_severity', action='store_true', default=False,
+                        help='Concat action logits with aggregator output before severity head')
+    parser.add_argument('--uncertainty_weighting', action='store_true', default=False,
+                        help='Kendall & Gal uncertainty weighting for severity + action losses')
+    parser.add_argument('--freeze_epoch',     default=8,      type=int,
+                        help='Epoch at which backbone is unfrozen for fine-tuning')
 
     # New levers
     parser.add_argument('--aux_weight',      default=0.2,    type=float,

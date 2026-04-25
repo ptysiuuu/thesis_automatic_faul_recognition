@@ -1,6 +1,7 @@
 import logging
 import os
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import gc
 import copy
@@ -118,6 +119,36 @@ class EMA:
 
 
 # ---------------------------------------------------------------------------
+# Uncertainty-weighted multi-task loss (Kendall & Gal, 2018)
+# ---------------------------------------------------------------------------
+
+
+class UncertaintyWeighting(nn.Module):
+    """
+    Learnable homoscedastic uncertainty weighting for N tasks.
+
+    Optimises log-variance scalars s_i = log(σ_i²):
+        L_total = Σ_i  exp(-s_i) · L_i  +  s_i
+
+    For two tasks (severity + action):
+        L = exp(-s0)·L_sev + s0 + exp(-s1)·L_act + s1
+
+    Low-loss tasks are naturally up-weighted; high-variance tasks are
+    down-weighted.  s_i are initialised at 0 (equal weighting at start).
+    """
+
+    def __init__(self, num_tasks: int = 2):
+        super().__init__()
+        self.log_vars = nn.Parameter(torch.zeros(num_tasks))
+
+    def forward(self, losses):
+        return sum(
+            torch.exp(-self.log_vars[i]) * losses[i] + self.log_vars[i]
+            for i in range(len(losses))
+        )
+
+
+# ---------------------------------------------------------------------------
 # Prediction decoding
 # ---------------------------------------------------------------------------
 
@@ -183,6 +214,8 @@ def trainer(
     use_tta=True,
     accum_steps=1,
     backbone_prefix="aggregation_model.model.",
+    freeze_epoch=8,
+    uncertainty_weighter=None,
 ):
     logging.info("start training")
     best_val = 0.0
@@ -190,8 +223,8 @@ def trainer(
 
     for epoch in range(epoch_start, max_epochs):
 
-        # Unfreeze backbone at epoch 8 with 10× smaller LR (discriminative fine-tuning)
-        if epoch == 8:
+        # Unfreeze backbone at freeze_epoch with 10× smaller LR (discriminative fine-tuning)
+        if epoch == freeze_epoch:
             backbone_params = [
                 p
                 for n, p in model.named_parameters()
@@ -203,7 +236,7 @@ def trainer(
                 optimizer.add_param_group({"params": backbone_params, "lr": 1e-5})
             ema.register_new()
             logging.info(
-                f"Backbone unfrozen at epoch 5 (prefix='{backbone_prefix}') — "
+                f"Backbone unfrozen at epoch {freeze_epoch} (prefix='{backbone_prefix}') — "
                 f"{len(backbone_params)} param groups added at LR=1e-5"
             )
 
@@ -224,6 +257,7 @@ def trainer(
             aux_weight=aux_weight,
             pbar=pbar,
             accum_steps=accum_steps,
+            uncertainty_weighter=uncertainty_weighter,
         )
         results = evaluate(
             os.path.join(path_dataset, "Train", "annotations.json"), pred_file
@@ -244,6 +278,7 @@ def trainer(
             set_name="valid",
             aux_weight=aux_weight,
             use_tta=use_tta,
+            uncertainty_weighter=uncertainty_weighter,
         )
         ema.restore()
 
@@ -263,6 +298,7 @@ def trainer(
                     "ema": ema.state_dict(),
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict(),
+                    "uw": uncertainty_weighter.state_dict() if uncertainty_weighter is not None else None,
                 },
                 os.path.join(best_model_path, "best_model.pth.tar"),
             )
@@ -289,6 +325,7 @@ def trainer(
             set_name="test",
             aux_weight=aux_weight,
             use_tta=use_tta,
+            uncertainty_weighter=uncertainty_weighter,
         )
         ema.restore()
 
@@ -306,6 +343,7 @@ def trainer(
                 "ema": ema.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "scheduler": scheduler.state_dict(),
+                "uw": uncertainty_weighter.state_dict() if uncertainty_weighter is not None else None,
             },
             os.path.join(best_model_path, f"{epoch + 1}_model.pth.tar"),
         )
@@ -333,6 +371,7 @@ def _train_epoch(
     use_tta=False,
     pbar=None,
     accum_steps=1,
+    uncertainty_weighter=None,
 ):
     if train:
         model.train()
@@ -429,7 +468,10 @@ def _train_epoch(
                 + criterion_bce(out_handball, targets_handball)
             ) / 4.0
 
-            total_loss = loss_sev + loss_act + aux_weight * loss_aux
+            if uncertainty_weighter is not None:
+                total_loss = uncertainty_weighter([loss_sev, loss_act]) + aux_weight * loss_aux
+            else:
+                total_loss = loss_sev + loss_act + aux_weight * loss_aux
 
             if train:
                 (total_loss / accum_steps).backward()

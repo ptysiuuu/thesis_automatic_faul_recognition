@@ -182,11 +182,13 @@ class MVNetwork(torch.nn.Module):
         agr_type: str = "transformer",
         lifting_net: nn.Module = nn.Sequential(),
         graph_topology: str = "structured",
+        cascade_severity: bool = False,
     ):
         super().__init__()
         self.net_name = net_name
         self.agr_type = agr_type
         self.graph_topology = graph_topology
+        self.cascade_severity = cascade_severity
         self.feat_dim = 512
 
         if net_name in _VIDEOMAE_V2_KEYS:
@@ -234,6 +236,7 @@ class MVNetwork(torch.nn.Module):
             feat_dim=self.feat_dim,
             lifting_net=lifting_net,
             graph_topology=self.graph_topology,
+            cascade_severity=self.cascade_severity,
         )
 
     def forward(self, mvimages: torch.Tensor):
@@ -296,9 +299,11 @@ class EarlyFusionNetwork(nn.Module):
     Output: same 7-tuple as MVNetwork (attention is always None)
     """
 
-    def __init__(self, num_views: int = 5, T_per_view: int = 16):
+    def __init__(self, num_views: int = 5, T_per_view: int = 16,
+                 cascade_severity: bool = False):
         super().__init__()
         self.backbone = EarlyFusionMViT(num_views, T_per_view)
+        self.cascade_severity = cascade_severity
         feat_dim = 768
 
         self.inter = nn.Sequential(
@@ -307,10 +312,11 @@ class EarlyFusionNetwork(nn.Module):
             nn.GELU(),
             nn.Linear(feat_dim, feat_dim),
         )
+        sev_in = feat_dim + 8 if cascade_severity else feat_dim
         self.fc_ordinal_severity = nn.Sequential(
-            nn.LayerNorm(feat_dim),
+            nn.LayerNorm(sev_in),
             nn.Dropout(0.3),
-            nn.Linear(feat_dim, feat_dim // 2),
+            nn.Linear(sev_in, feat_dim // 2),
             nn.GELU(),
             nn.Dropout(0.3),
             nn.Linear(feat_dim // 2, 3),
@@ -333,9 +339,15 @@ class EarlyFusionNetwork(nn.Module):
         # fused_clip: [B, C, T*V, H, W]
         feat = self.backbone(fused_clip)  # [B, 768]
         inter = self.inter(feat)
+        pred_action = self.fc_action(inter)
+        if self.cascade_severity:
+            sev_in = torch.cat([inter, pred_action], dim=-1)
+            pred_sev = self.fc_ordinal_severity(sev_in)
+        else:
+            pred_sev = self.fc_ordinal_severity(inter)
         return (
-            self.fc_ordinal_severity(inter),
-            self.fc_action(inter),
+            pred_sev,
+            pred_action,
             self.fc_contact(inter).squeeze(-1),
             self.fc_bodypart(inter).squeeze(-1),
             self.fc_try_to_play(inter).squeeze(-1),
