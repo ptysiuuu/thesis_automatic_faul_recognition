@@ -32,20 +32,22 @@ class GraphBuilder(nn.Module):
       dim 1  : 1 if the edge crosses view types  (live ↔ replay)
     """
 
-    TOPOLOGIES = ('structured', 'fully_connected', 'replay_only')
+    TOPOLOGIES = ("structured", "fully_connected", "replay_only")
     EDGE_FEAT_DIM = 2
 
-    def __init__(self, max_views: int = 5, topology: str = 'structured'):
+    def __init__(self, max_views: int = 5, topology: str = "structured"):
         super().__init__()
         if topology not in self.TOPOLOGIES:
-            raise ValueError(f"topology must be one of {self.TOPOLOGIES}, got '{topology}'")
+            raise ValueError(
+                f"topology must be one of {self.TOPOLOGIES}, got '{topology}'"
+            )
         self.topology = topology
         self.max_views = max_views
 
         for v in range(1, max_views + 1):
             adj, edge_attr = self._build(v)
-            self.register_buffer(f'adj_{v}', adj)
-            self.register_buffer(f'edge_attr_{v}', edge_attr)
+            self.register_buffer(f"adj_{v}", adj)
+            self.register_buffer(f"edge_attr_{v}", edge_attr)
 
     def _build(self, V: int):
         adj = torch.zeros(V, V)
@@ -53,35 +55,112 @@ class GraphBuilder(nn.Module):
 
         def add_edge(src: int, dst: int):
             adj[src, dst] = 1.0
-            edge_attr[src, dst, 0] = float(src == dst)               # self-loop flag
-            edge_attr[src, dst, 1] = float((src == 0) != (dst == 0)) # cross-type flag
+            edge_attr[src, dst, 0] = float(src == dst)  # self-loop flag
+            edge_attr[src, dst, 1] = float((src == 0) != (dst == 0))  # cross-type flag
 
         # Self-loops always present
         for i in range(V):
             add_edge(i, i)
 
-        if self.topology == 'fully_connected':
+        if self.topology == "fully_connected":
             for i in range(V):
                 for j in range(V):
                     if i != j:
                         add_edge(i, j)
 
-        elif self.topology == 'structured':
+        elif self.topology == "structured":
             for i in range(1, V):
-                add_edge(i, 0)      # replay → live
-                add_edge(0, i)      # live → replay
+                add_edge(i, 0)  # replay → live
+                add_edge(0, i)  # live → replay
             for i in range(1, V - 1):
                 add_edge(i, i + 1)  # adjacent replay → next
                 add_edge(i + 1, i)  # next → adjacent replay
 
-        elif self.topology == 'replay_only':
+        elif self.topology == "replay_only":
             for i in range(1, V):
-                add_edge(i, 0)      # replay → live only
+                add_edge(i, 0)  # replay → live only
 
         return adj, edge_attr
 
     def get(self, V: int):
-        return getattr(self, f'adj_{V}'), getattr(self, f'edge_attr_{V}')
+        return getattr(self, f"adj_{V}"), getattr(self, f"edge_attr_{V}")
+
+
+class TokenGraphBuilder(nn.Module):
+    """
+    Kreator grafu dla tokenów czasowo-przestrzennych [V*T, V*T].
+    Węzły: (kamera, czas).
+    Cechy krawędzi [dim=3]: [self_loop, cross_view_edge, temporal_edge]
+    """
+
+    TOPOLOGIES = ("structured", "fully_connected", "replay_only")
+    EDGE_FEAT_DIM = 3
+
+    def __init__(
+        self, max_views: int = 5, T_max: int = 8, topology: str = "structured"
+    ):
+        super().__init__()
+        self.topology = topology
+        self.max_views = max_views
+        self.T_max = T_max
+
+        # Prekomputacja dla max V oraz dla T=1 (klasyczne modele) i T=T_max (MViT)
+        for v in range(1, max_views + 1):
+            for t in [1, T_max]:  # ZMIANA: pętla dla wsparcia T=1
+                adj, edge_attr = self._build(v, t)
+                self.register_buffer(f"adj_{v}_{t}", adj)
+                self.register_buffer(f"edge_attr_{v}_{t}", edge_attr)
+
+    def _build(self, V: int, T: int):
+        num_nodes = V * T
+        adj = torch.zeros(num_nodes, num_nodes)
+        edge_attr = torch.zeros(num_nodes, num_nodes, self.EDGE_FEAT_DIM)
+
+        def get_idx(v, t):
+            return v * T + t
+
+        def add_edge(src_v, src_t, dst_v, dst_t, edge_type):
+            src = get_idx(src_v, src_t)
+            dst = get_idx(dst_v, dst_t)
+            adj[src, dst] = 1.0
+            edge_attr[src, dst, edge_type] = 1.0
+
+        # Logika widoków z Twojego bazowego GraphBuildera
+        def view_has_edge(src_v, dst_v):
+            if self.topology == "fully_connected":
+                return src_v != dst_v
+            elif self.topology == "structured":
+                if src_v > 0 and dst_v == 0:
+                    return True  # replay -> live
+                if src_v == 0 and dst_v > 0:
+                    return True  # live -> replay
+                if src_v > 0 and dst_v > 0 and abs(src_v - dst_v) == 1:
+                    return True  # obok siebie
+            elif self.topology == "replay_only":
+                if src_v > 0 and dst_v == 0:
+                    return True
+            return False
+
+        for v1 in range(V):
+            for t1 in range(T):
+                # 1. Self-loop
+                add_edge(v1, t1, v1, t1, 0)
+
+                # 2. Krawędź temporalna (ta sama kamera, sąsiedni czas)
+                if t1 > 0:
+                    add_edge(v1, t1, v1, t1 - 1, 2)
+                if t1 < T - 1:
+                    add_edge(v1, t1, v1, t1 + 1, 2)
+
+                # 3. Krawędź cross-view (różne kamery, ten sam czas)
+                for v2 in range(V):
+                    if v1 != v2 and view_has_edge(v1, v2):
+                        add_edge(v1, t1, v2, t1, 1)
+
+        return adj, edge_attr
+
+    def get(self, V: int, T: int):
+        return getattr(self, f"adj_{V}_{T}"), getattr(self, f"edge_attr_{V}_{T}")
 
 
 class GATLayer(nn.Module):
@@ -115,63 +194,75 @@ class GATLayer(nn.Module):
     h_new : [B, V, D]        — padded views are zero-filled
     """
 
-    def __init__(self, feat_dim: int, num_heads: int = 4, dropout: float = 0.1,
-                 edge_feat_dim: int = 2):
+    def __init__(
+        self,
+        feat_dim: int,
+        num_heads: int = 4,
+        dropout: float = 0.1,
+        edge_feat_dim: int = 2,
+    ):
         super().__init__()
         if feat_dim % num_heads != 0:
-            raise ValueError(f"feat_dim ({feat_dim}) must be divisible by num_heads ({num_heads})")
+            raise ValueError(
+                f"feat_dim ({feat_dim}) must be divisible by num_heads ({num_heads})"
+            )
         self.num_heads = num_heads
-        self.head_dim  = feat_dim // num_heads
-        self.feat_dim  = feat_dim
+        self.head_dim = feat_dim // num_heads
+        self.feat_dim = feat_dim
 
         # Shared linear projection applied to all nodes
-        self.W        = nn.Linear(feat_dim, feat_dim, bias=False)
+        self.W = nn.Linear(feat_dim, feat_dim, bias=False)
         # Per-head attention scalar from concatenated [src ‖ dst] head features
-        self.attn     = nn.Linear(2 * self.head_dim, 1, bias=False)
+        self.attn = nn.Linear(2 * self.head_dim, 1, bias=False)
         # Edge feature projection: E → num_heads (one additive bias per head per edge)
         self.edge_proj = nn.Linear(edge_feat_dim, num_heads, bias=False)
 
         self.dropout = nn.Dropout(dropout)
-        self.act     = nn.ELU()
+        self.act = nn.ELU()
 
-    def forward(self, x: torch.Tensor, adj: torch.Tensor,
-                edge_attr: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        adj: torch.Tensor,
+        edge_attr: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> torch.Tensor:
         B, V, D = x.shape
-        H, Dh   = self.num_heads, self.head_dim
+        H, Dh = self.num_heads, self.head_dim
 
-        Wx = self.W(x).view(B, V, H, Dh)                           # [B, V, H, Dh]
+        Wx = self.W(x).view(B, V, H, Dh)  # [B, V, H, Dh]
 
         # Expand to all (src, dst) pairs
-        h_src = Wx.unsqueeze(2).expand(-1, -1, V, -1, -1)          # [B, Vsrc, Vdst, H, Dh]
-        h_dst = Wx.unsqueeze(1).expand(-1, V, -1, -1, -1)          # [B, Vsrc, Vdst, H, Dh]
+        h_src = Wx.unsqueeze(2).expand(-1, -1, V, -1, -1)  # [B, Vsrc, Vdst, H, Dh]
+        h_dst = Wx.unsqueeze(1).expand(-1, V, -1, -1, -1)  # [B, Vsrc, Vdst, H, Dh]
 
         # Raw attention scores: e[b, src, dst, head]
-        cat = torch.cat([h_src, h_dst], dim=-1)                     # [B, V, V, H, 2*Dh]
-        e   = self.attn(cat).squeeze(-1)                            # [B, V, V, H]
+        cat = torch.cat([h_src, h_dst], dim=-1)  # [B, V, V, H, 2*Dh]
+        e = self.attn(cat).squeeze(-1)  # [B, V, V, H]
 
         # Add edge-feature bias (edge_proj of zeros = 0 for absent edges; bias=False)
-        ef = self.edge_proj(edge_attr)                              # [V, V, H]
-        e  = e + ef.unsqueeze(0)
+        ef = self.edge_proj(edge_attr)  # [V, V, H]
+        e = e + ef.unsqueeze(0)
 
         e = F.leaky_relu(e, negative_slope=0.2)
 
         # Mask absent edges → -inf so softmax ignores them
-        non_edge = ~adj.bool().unsqueeze(0).unsqueeze(-1)           # [1, V, V, 1]
-        e = e.masked_fill(non_edge, float('-inf'))
+        non_edge = ~adj.bool().unsqueeze(0).unsqueeze(-1)  # [1, V, V, 1]
+        e = e.masked_fill(non_edge, float("-inf"))
 
         # Mask padded nodes (both endpoints of every edge touching a padded view)
-        pad_src = mask.unsqueeze(2).unsqueeze(-1)                   # [B, V, 1, 1]
-        pad_dst = mask.unsqueeze(1).unsqueeze(-1)                   # [B, 1, V, 1]
-        e = e.masked_fill(pad_src | pad_dst, float('-inf'))
+        pad_src = mask.unsqueeze(2).unsqueeze(-1)  # [B, V, 1, 1]
+        pad_dst = mask.unsqueeze(1).unsqueeze(-1)  # [B, 1, V, 1]
+        e = e.masked_fill(pad_src | pad_dst, float("-inf"))
 
         # Normalise: softmax over incoming sources for each target j
-        alpha = torch.softmax(e, dim=1)                             # [B, Vsrc, Vdst, H]
-        alpha = torch.nan_to_num(alpha, nan=0.0)                    # guard all-padded targets
+        alpha = torch.softmax(e, dim=1)  # [B, Vsrc, Vdst, H]
+        alpha = torch.nan_to_num(alpha, nan=0.0)  # guard all-padded targets
         alpha = self.dropout(alpha)
 
         # Aggregate: h_new[j] = Σ_i  α[i,j] · W·h_i
-        h_new = (alpha.unsqueeze(-1) * h_src).sum(dim=1)           # [B, Vdst, H, Dh]
-        h_new = self.act(h_new.reshape(B, V, D))                   # [B, V, D]
+        h_new = (alpha.unsqueeze(-1) * h_src).sum(dim=1)  # [B, Vdst, H, Dh]
+        h_new = self.act(h_new.reshape(B, V, D))  # [B, V, D]
 
         # Zero padded node outputs so they don't pollute residuals
         h_new = h_new.masked_fill(mask.unsqueeze(-1), 0.0)
