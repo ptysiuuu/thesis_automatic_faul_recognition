@@ -46,5 +46,5 @@ python main.py \
     --use_tta \
     --model_name       "VARS_gat_${TOPOLOGY}" \
     --GPU              0 \
-    --max_num_worker   4 \
+    --max_num_worker   16 \
     --only_evaluation  3

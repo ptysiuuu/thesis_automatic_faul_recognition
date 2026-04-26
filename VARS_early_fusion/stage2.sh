@@ -60,7 +60,7 @@ python train_stage2.py \
     --ema_decay       0.999 \
     --accum_steps     1 \
     --GPU             0 \
-    --max_num_worker  4 \
+    --max_num_worker  16 \
     --model_name      "$MODEL_NAME" \
     $CASCADE \
     $UW
