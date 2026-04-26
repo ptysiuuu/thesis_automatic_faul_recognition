@@ -4,6 +4,27 @@ from torch import nn
 from graph import GraphBuilder, GATLayer
 
 
+class SetNorm(nn.Module):
+    """
+    Permutation-invariant normalization for sets.
+    Normalizes across both the set (V or V*T) and feature dimensions jointly,
+    preserving relative scale between elements.
+    """
+
+    def __init__(self, feat_dim: int, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+        self.scale = nn.Parameter(torch.ones(feat_dim))
+        self.bias = nn.Parameter(torch.zeros(feat_dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, N, D] where N is V or V*T
+        mean = x.mean(dim=(1, 2), keepdim=True)  # [B, 1, 1]
+        var = x.var(dim=(1, 2), keepdim=True, unbiased=False)
+        x_norm = (x - mean) / (var + self.eps).sqrt()
+        return x_norm * self.scale + self.bias
+
+
 class WeightedAggregate(nn.Module):
     def __init__(self, model, feat_dim, lifting_net=nn.Sequential()):
         super().__init__()
@@ -72,6 +93,8 @@ class TransformerAggregate(nn.Module):
         self.lifting_net = lifting_net
         self.feat_dim = feat_dim
 
+        self.set_norm = SetNorm(feat_dim)
+
         # [CLS] token — aggregates information from all views / time-steps
         self.cls_token = nn.Parameter(torch.zeros(1, 1, feat_dim))
 
@@ -103,44 +126,40 @@ class TransformerAggregate(nn.Module):
     def forward(self, mvimages):
         B, V, *_ = mvimages.shape
 
-        # --- backbone feature extraction ---
         raw = unbatch_tensor(
             self.model(batch_tensor(mvimages, dim=1, squeeze=True)),
             B,
             dim=1,
             unsqueeze=True,
         )
-        # raw: [B, V, D] for classic backbones  OR  [B, V, T', D] for MViT-v2-S
 
-        if raw.dim() == 3:  # classic path: add dummy time axis
-            raw = self.lifting_net(raw)  # [B, V, D]
-            raw = raw.unsqueeze(2)  # [B, V, 1, D]
-        # raw is now always [B, V, T', D]
+        if raw.dim() == 3:
+            raw = self.lifting_net(raw)
+            raw = raw.unsqueeze(2)
         T = raw.shape[2]
 
-        # --- view padding mask ---
-        view_mask = mvimages.abs().sum(dim=(2, 3, 4, 5)) == 0  # [B, V] True = padded
+        # SetNorm on raw backbone features BEFORE quality gate and embeddings
+        raw_flat = raw.flatten(1, 2)  # [B, V*T', D]
+        raw_flat = self.set_norm(raw_flat)  # normalize across the set
+        raw = raw_flat.view(B, V, T, -1)  # [B, V, T', D]
 
-        # --- per-view quality gate (from temporal mean) ---
-        quality = self.quality_gate(raw.mean(2))  # [B, V, 1]
+        # view padding mask
+        view_mask = mvimages.abs().sum(dim=(2, 3, 4, 5)) == 0
+
+        # quality gate (now operating on SetNorm-normalized features)
+        quality = self.quality_gate(raw.mean(2))
         quality = quality.masked_fill(view_mask.unsqueeze(-1), 0.0)
-        raw = raw * (0.5 + quality.unsqueeze(2))  # [B, V, T', D]
+        raw = raw * (0.5 + quality.unsqueeze(2))
 
-        # --- positional embeddings ---
-        raw = raw + self.view_embeds[:, :V, :].unsqueeze(2)  # broadcast over T'
-        raw = raw + self.temporal_embeds[:, :T, :].unsqueeze(1)  # broadcast over V
+        # positional embeddings (added after normalization, not washed out)
+        raw = raw + self.view_embeds[:, :V, :].unsqueeze(2)
+        raw = raw + self.temporal_embeds[:, :T, :].unsqueeze(1)
 
-        # --- flatten (view, time) → sequence ---
         tokens = raw.flatten(1, 2)  # [B, V*T', D]
 
-        # expand view padding mask to cover all T' tokens per view
-        pad_token_mask = (
-            view_mask.unsqueeze(2).expand(-1, -1, T).flatten(1, 2)  # [B, V*T']
-        )
-
-        # --- prepend [CLS] ---
+        pad_token_mask = view_mask.unsqueeze(2).expand(-1, -1, T).flatten(1, 2)
         cls_tokens = self.cls_token.expand(B, -1, -1)
-        x = torch.cat([cls_tokens, tokens], dim=1)  # [B, V*T'+1, D]
+        x = torch.cat([cls_tokens, tokens], dim=1)
         cls_mask = torch.zeros((B, 1), dtype=torch.bool, device=mvimages.device)
         padding_mask = torch.cat([cls_mask, pad_token_mask], dim=1)
 
