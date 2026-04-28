@@ -16,6 +16,11 @@ from torchvision.models.video import (
     mvit_v1_b,
     MViT_V1_B_Weights,
 )
+from backbone_attention_pool import (
+    MViTv2SBackboneAttnPool,
+    EarlyFusionMViTAttnPool,
+    VideoMAEv2BackboneAttnPool,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +199,6 @@ class MVNetwork(torch.nn.Module):
         if net_name in _VIDEOMAE_V2_KEYS:
             hf_id, hidden_size = HF_VIDEOMAE_REGISTRY[net_name]
             network = VideoMAEv2Backbone(hf_model_id=hf_id, hidden_size=hidden_size)
-            self.feat_dim = hidden_size
 
         elif net_name in HF_VIDEOMAE_REGISTRY:
             hf_id, hidden_size = HF_VIDEOMAE_REGISTRY[net_name]
@@ -215,7 +219,7 @@ class MVNetwork(torch.nn.Module):
             network = r2plus1d_18(weights=R2Plus1D_18_Weights.DEFAULT)
 
         elif net_name == "mvit_v2_s":
-            network = MViTv2SBackbone()
+            network = MViTv2SBackboneAttnPool()
             self.feat_dim = 768
 
         elif net_name == "mvit_v1_b":
@@ -280,7 +284,7 @@ class EarlyFusionMViT(nn.Module):
             x = x.permute(0, 2, 1, 3, 4).contiguous()
         B, C, T, H, W = x.shape
         if T != 16:
-            x = F.interpolate(x, size=(16, H, W), mode='trilinear', align_corners=False)
+            x = F.interpolate(x, size=(16, H, W), mode="trilinear", align_corners=False)
         self._base(x)
         # _pooled_output is [B, N, 768] — mean-pool tokens to get [B, 768]
         return self._pooled_output.mean(dim=1)
@@ -299,10 +303,11 @@ class EarlyFusionNetwork(nn.Module):
     Output: same 7-tuple as MVNetwork (attention is always None)
     """
 
-    def __init__(self, num_views: int = 5, T_per_view: int = 16,
-                 cascade_severity: bool = False):
+    def __init__(
+        self, num_views: int = 5, T_per_view: int = 16, cascade_severity: bool = False
+    ):
         super().__init__()
-        self.backbone = EarlyFusionMViT(num_views, T_per_view)
+        self.backbone = EarlyFusionMViTAttnPool(num_views, T_per_view)
         self.cascade_severity = cascade_severity
         feat_dim = 768
 

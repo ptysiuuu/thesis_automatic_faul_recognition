@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=VARS_transformer2
+#SBATCH --job-name=VARS_exp1_bidir
 #SBATCH --partition=plgrid-gpu-a100
 #SBATCH --account=plggolemml26-gpu-a100
 #SBATCH --nodes=1
@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --time=20:00:00
-#SBATCH --output=VARS_transformer2_%x_%j.out
+#SBATCH --output=VARS_exp1_%x_%j.out
 
 DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
 
@@ -18,12 +18,11 @@ cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion
 python main.py \
     --path                "$DATASET_PATH" \
     --pre_model           mvit_v2_s \
-    --pooling_type        transformer \
-    --cascade_severity \
+    --pooling_type        bidir_crossattn \
     --uncertainty_weighting \
     --freeze_epoch        7 \
     --batch_size          4 \
-    --accum_steps         4 \
+    --accum_steps         1 \
     --LR                  1e-4 \
     --weight_decay        1e-3 \
     --max_epochs          50 \
@@ -38,7 +37,7 @@ python main.py \
     --aux_weight          0.2 \
     --ema_decay           0.999 \
     --use_tta \
-    --model_name          "VARS_transfomer2_cascade" \
+    --model_name          "VARS_exp1_bidir_crossattn" \
     --GPU                 0 \
     --max_num_worker      16 \
     --only_evaluation     3

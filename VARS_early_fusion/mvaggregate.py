@@ -2,6 +2,7 @@ from utils import batch_tensor, unbatch_tensor
 import torch
 from torch import nn
 from graph import GraphBuilder, GATLayer
+from dynamic_gat import DynamicGATAggregate
 
 
 class SetNorm(nn.Module):
@@ -333,6 +334,162 @@ class GATAggregate(nn.Module):
         return pooled, importance
 
 
+class BidirCrossAttentionAggregate(nn.Module):
+    """
+    Bidirectional asymmetric cross-attention between live camera and replays.
+
+    Architecture
+    ------------
+    1. Extract per-view features  [B, V, D]
+    2. Live → Replay cross-attn:
+         Query = live,    Key/Value = replays  → enriched_live   [B, D]
+    3. Replay → Live cross-attn:
+         Query = replays, Key/Value = live     → enriched_replays [B, D]
+    4. Bottleneck gate fuses both into one vector [B, D]
+
+    Bottleneck projections (D → D//4 → D) limit the parameter cost of
+    the two extra attention modules to ~2× the original CrossAttentionAggregate.
+
+    Parameters
+    ----------
+    model       : backbone (shared across views)
+    feat_dim    : D, backbone output dimensionality
+    num_heads   : attention heads (default 4)
+    bottleneck  : inner dim of bottleneck MLP (default feat_dim // 4)
+    lifting_net : optional post-backbone projection
+    """
+
+    def __init__(
+        self,
+        model,
+        feat_dim: int,
+        num_heads: int = 4,
+        bottleneck: int = None,
+        lifting_net: nn.Module = nn.Sequential(),
+    ):
+        super().__init__()
+        self.model = model
+        self.lifting_net = lifting_net
+        self.feat_dim = feat_dim
+        bn = bottleneck or feat_dim // 4
+
+        # --- Direction 1: live queries replays (original direction) ---
+        self.live_queries_replays = nn.MultiheadAttention(
+            embed_dim=feat_dim, num_heads=num_heads, dropout=0.1, batch_first=True
+        )
+
+        # --- Direction 2: replays query live (new direction) ---
+        self.replays_query_live = nn.MultiheadAttention(
+            embed_dim=feat_dim, num_heads=num_heads, dropout=0.1, batch_first=True
+        )
+
+        # --- Bottleneck projections to reduce parameter cost ---
+        # Applied before each cross-attention to project Q/K/V to lower dim,
+        # then project back. Keeps the cross-attn modules lighter.
+        self.bn_live_down = nn.Linear(feat_dim, bn)
+        self.bn_live_up = nn.Linear(bn, feat_dim)
+        self.bn_replay_down = nn.Linear(feat_dim, bn)
+        self.bn_replay_up = nn.Linear(bn, feat_dim)
+
+        # --- Layer norms ---
+        self.norm_live = nn.LayerNorm(feat_dim)
+        self.norm_replay = nn.LayerNorm(feat_dim)
+        self.norm_out = nn.LayerNorm(feat_dim)
+
+        # --- Fusion gate: decides how much of each direction to use ---
+        # Input: concat([enriched_live, enriched_replays]) → 2 scalars → softmax
+        self.fusion_gate = nn.Sequential(
+            nn.Linear(feat_dim * 2, feat_dim // 2),
+            nn.ReLU(),
+            nn.Linear(feat_dim // 2, 2),  # 2 weights: [w_live, w_replay]
+            nn.Softmax(dim=-1),
+        )
+
+        # --- Final projection ---
+        self.out_proj = nn.Linear(feat_dim, feat_dim)
+
+    # ------------------------------------------------------------------
+    def forward(self, mvimages: torch.Tensor):
+        B, V, *_ = mvimages.shape
+
+        # --- 1. Backbone feature extraction ---
+        aux = self.lifting_net(
+            unbatch_tensor(
+                self.model(batch_tensor(mvimages, dim=1, squeeze=True)),
+                B,
+                dim=1,
+                unsqueeze=True,
+            )
+        )  # [B, V, D] or [B, V, T', D]
+
+        if aux.dim() == 4:
+            aux = aux.mean(dim=2)  # [B, V, D]
+
+        # --- 2. Split live and replays ---
+        live = aux[:, 0:1, :]  # [B, 1, D]
+        replays = aux[:, 1:, :]  # [B, V-1, D]
+
+        replay_pad_mask = (
+            mvimages[:, 1:, :].abs().sum(dim=(2, 3, 4, 5)) == 0
+        )  # [B, V-1]  True = padded
+
+        all_padded = replay_pad_mask.all(dim=1)  # [B]
+
+        # --- 3. Direction 1: live queries replays ---
+        replays_bn = self.bn_replay_up(torch.relu(self.bn_replay_down(replays)))
+
+        enriched_live, attn_weights = self.live_queries_replays(
+            query=live,
+            key=replays_bn,
+            value=replays_bn,
+            key_padding_mask=replay_pad_mask,
+        )
+        enriched_live = self.norm_live(live + enriched_live)  # [B, 1, D]
+
+        # --- 4. Direction 2: replays query live ---
+        live_bn = self.bn_live_up(torch.relu(self.bn_live_down(live)))
+
+        enriched_replays, _ = self.replays_query_live(
+            query=replays,
+            key=live_bn,
+            value=live_bn,
+        )
+        # Zero out padded replay slots before pooling
+        replay_counts = (~replay_pad_mask).float().sum(dim=1, keepdim=True).clamp(min=1)
+        enriched_replays = enriched_replays.masked_fill(
+            replay_pad_mask.unsqueeze(-1), 0.0
+        )
+        enriched_replays_pooled = enriched_replays.sum(dim=1) / replay_counts  # [B, D]
+
+        # Residual: add original replay mean so gradient flows even with random attn
+        original_replays_masked = replays.masked_fill(
+            replay_pad_mask.unsqueeze(-1), 0.0
+        )
+        original_replay_mean = (
+            original_replays_masked.sum(dim=1) / replay_counts
+        )  # [B, D]
+        enriched_replays_pooled = self.norm_replay(
+            original_replay_mean + enriched_replays_pooled
+        )  # [B, D]
+
+        # --- 5. Fusion gate ---
+        live_vec = enriched_live.squeeze(1)  # [B, D]
+        replay_vec = enriched_replays_pooled  # [B, D]
+
+        gate_weights = self.fusion_gate(
+            torch.cat([live_vec, replay_vec], dim=-1)
+        )  # [B, 2]
+        fused = (
+            gate_weights[:, 0:1] * live_vec + gate_weights[:, 1:2] * replay_vec
+        )  # [B, D]
+
+        # Fallback for samples with zero real replays
+        if all_padded.any():
+            fused[all_padded] = live_vec[all_padded]
+
+        return self.norm_out(self.out_proj(fused)), attn_weights
+
+
 class MVAggregate(nn.Module):
     """
     Multi-view aggregation module with:
@@ -410,6 +567,21 @@ class MVAggregate(nn.Module):
                 feat_dim=feat_dim,
                 lifting_net=lifting_net,
                 topology=graph_topology,
+            )
+        elif agr_type == "bidir_crossattn":
+            self.aggregation_model = BidirCrossAttentionAggregate(
+                model=model,
+                feat_dim=feat_dim,
+                lifting_net=lifting_net,
+            )
+        elif agr_type == "dynagat":
+            self.aggregation_model = DynamicGATAggregate(
+                model=model,
+                feat_dim=feat_dim,
+                lifting_net=lifting_net,
+                topology=graph_topology,
+                knn_k=2,
+                knn_temperature=0.1,
             )
         else:
             self.aggregation_model = WeightedAggregate(
