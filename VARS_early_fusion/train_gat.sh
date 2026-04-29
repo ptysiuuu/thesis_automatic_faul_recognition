@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=20:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=VARS_exp3_%x_%j.out
 
 DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
@@ -20,7 +20,6 @@ python main.py \
     --pre_model           mvit_v2_s \
     --pooling_type        dynagat \
     --graph_topology      fully_connected \
-    --cascade_severity \
     --uncertainty_weighting \
     --freeze_epoch        10 \
     --batch_size          4 \

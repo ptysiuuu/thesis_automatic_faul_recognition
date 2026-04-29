@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=20:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=VARS_graph2_%x_%j.out
 
 # Full ablation experiment:
