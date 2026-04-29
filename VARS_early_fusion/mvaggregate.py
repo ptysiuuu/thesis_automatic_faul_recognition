@@ -401,8 +401,8 @@ class BidirCrossAttentionAggregate(nn.Module):
         self.fusion_gate = nn.Sequential(
             nn.Linear(feat_dim * 2, feat_dim // 2),
             nn.ReLU(),
-            nn.Linear(feat_dim // 2, 2),  # 2 weights: [w_live, w_replay]
-            nn.Softmax(dim=-1),
+            nn.Linear(feat_dim // 2, 1),  # single scalar
+            nn.Sigmoid(),  # α ∈ (0,1)
         )
 
         # --- Final projection ---
@@ -476,12 +476,8 @@ class BidirCrossAttentionAggregate(nn.Module):
         live_vec = enriched_live.squeeze(1)  # [B, D]
         replay_vec = enriched_replays_pooled  # [B, D]
 
-        gate_weights = self.fusion_gate(
-            torch.cat([live_vec, replay_vec], dim=-1)
-        )  # [B, 2]
-        fused = (
-            gate_weights[:, 0:1] * live_vec + gate_weights[:, 1:2] * replay_vec
-        )  # [B, D]
+        alpha = self.fusion_gate(torch.cat([live_vec, replay_vec], dim=-1))  # [B, 1]
+        fused = alpha * live_vec + (1 - alpha) * replay_vec  # [B, D]
 
         # Fallback for samples with zero real replays
         if all_padded.any():
