@@ -335,87 +335,46 @@ class GATAggregate(nn.Module):
 
 
 class BidirCrossAttentionAggregate(nn.Module):
-    """
-    Bidirectional asymmetric cross-attention between live camera and replays.
-
-    Architecture
-    ------------
-    1. Extract per-view features  [B, V, D]
-    2. Live → Replay cross-attn:
-         Query = live,    Key/Value = replays  → enriched_live   [B, D]
-    3. Replay → Live cross-attn:
-         Query = replays, Key/Value = live     → enriched_replays [B, D]
-    4. Bottleneck gate fuses both into one vector [B, D]
-
-    Bottleneck projections (D → D//4 → D) limit the parameter cost of
-    the two extra attention modules to ~2× the original CrossAttentionAggregate.
-
-    Parameters
-    ----------
-    model       : backbone (shared across views)
-    feat_dim    : D, backbone output dimensionality
-    num_heads   : attention heads (default 4)
-    bottleneck  : inner dim of bottleneck MLP (default feat_dim // 4)
-    lifting_net : optional post-backbone projection
-    """
-
     def __init__(
         self,
         model,
         feat_dim: int,
         num_heads: int = 4,
-        bottleneck: int = None,
         lifting_net: nn.Module = nn.Sequential(),
     ):
         super().__init__()
         self.model = model
         self.lifting_net = lifting_net
         self.feat_dim = feat_dim
-        bn = bottleneck or feat_dim // 4
 
-        # --- Direction 1: live queries replays (original direction) ---
+        # --- Direction 1: live queries replays (Standard Cross-Attention) ---
         self.live_queries_replays = nn.MultiheadAttention(
             embed_dim=feat_dim, num_heads=num_heads, dropout=0.1, batch_first=True
         )
 
-        # --- Direction 2: replays query live (new direction) ---
-        self.replays_query_live = nn.MultiheadAttention(
-            embed_dim=feat_dim, num_heads=num_heads, dropout=0.1, batch_first=True
+        # --- Direction 2: Enriquing Replays with Live ---
+        # Replaces the broken L=1 Attention with a stable Cross-Gate MLP
+        self.live_to_replay_gate = nn.Sequential(
+            nn.Linear(feat_dim * 2, feat_dim), nn.Sigmoid()
         )
-
-        # --- Bottleneck projections to reduce parameter cost ---
-        # Applied before each cross-attention to project Q/K/V to lower dim,
-        # then project back. Keeps the cross-attn modules lighter.
-        self.bn_live_down = nn.Linear(feat_dim, bn)
-        self.bn_live_up = nn.Linear(bn, feat_dim)
-        self.bn_replay_down = nn.Linear(feat_dim, bn)
-        self.bn_replay_up = nn.Linear(bn, feat_dim)
-
-        nn.init.zeros_(self.bn_live_down.weight)
-        nn.init.zeros_(self.bn_live_up.weight)
-        nn.init.zeros_(self.bn_replay_down.weight)
-        nn.init.zeros_(self.bn_replay_up.weight)
 
         # --- Layer norms ---
         self.norm_live = nn.LayerNorm(feat_dim)
         self.norm_replay = nn.LayerNorm(feat_dim)
-        self.norm_out = nn.LayerNorm(feat_dim)
 
-        # --- Fusion gate: decides how much of each direction to use ---
-        # Input: concat([enriched_live, enriched_replays]) → 2 scalars → softmax
+        # --- Fusion gate ---
         self.fusion_gate = nn.Sequential(
             nn.Linear(feat_dim * 2, feat_dim // 2),
             nn.ReLU(),
-            nn.Linear(feat_dim // 2, 1),  # single scalar
-            nn.Sigmoid(),  # α ∈ (0,1)
+            nn.Linear(feat_dim // 2, 1),
+            nn.Sigmoid(),
         )
 
         # --- Final projection ---
         self.out_proj = nn.Linear(feat_dim, feat_dim)
-        nn.init.eye_(self.out_proj.weight)  # identity initialization
+        nn.init.eye_(self.out_proj.weight)
         nn.init.zeros_(self.out_proj.bias)
 
-    # ------------------------------------------------------------------
     def forward(self, mvimages: torch.Tensor):
         B, V, *_ = mvimages.shape
 
@@ -427,68 +386,47 @@ class BidirCrossAttentionAggregate(nn.Module):
                 dim=1,
                 unsqueeze=True,
             )
-        )  # [B, V, D] or [B, V, T', D]
-
+        )
         if aux.dim() == 4:
-            aux = aux.mean(dim=2)  # [B, V, D]
+            aux = aux.mean(dim=2)
 
         # --- 2. Split live and replays ---
         live = aux[:, 0:1, :]  # [B, 1, D]
         replays = aux[:, 1:, :]  # [B, V-1, D]
 
-        replay_pad_mask = (
-            mvimages[:, 1:, :].abs().sum(dim=(2, 3, 4, 5)) == 0
-        )  # [B, V-1]  True = padded
+        replay_pad_mask = mvimages[:, 1:, :].abs().sum(dim=(2, 3, 4, 5)) == 0
 
-        all_padded = replay_pad_mask.all(dim=1)  # [B]
-
-        # --- 3. Direction 1: live queries replays ---
-        replays_bn = self.bn_replay_up(torch.relu(self.bn_replay_down(replays)))
-
+        # --- 3. Direction 1: Live queries Replays ---
+        # NO bottlenecks blocking the Keys/Values anymore
         enriched_live, attn_weights = self.live_queries_replays(
             query=live,
-            key=replays_bn,
-            value=replays_bn,
+            key=replays,
+            value=replays,
             key_padding_mask=replay_pad_mask,
         )
-        enriched_live = self.norm_live(live + enriched_live)  # [B, 1, D]
+        live_vec = self.norm_live(live + enriched_live).squeeze(1)  # [B, D]
 
-        # --- 4. Direction 2: replays query live ---
-        live_bn = self.bn_live_up(torch.relu(self.bn_live_down(live)))
+        # --- 4. Direction 2: Replays enriched by Live ---
+        # Expand live to match replays shape [B, V-1, D]
+        live_expanded = live.expand(-1, replays.size(1), -1)
 
-        enriched_replays, _ = self.replays_query_live(
-            query=replays,
-            key=live_bn,
-            value=live_bn,
-        )
-        # Zero out padded replay slots before pooling
+        # Gate learns how much of the live feature to inject into each replay
+        gate = self.live_to_replay_gate(torch.cat([replays, live_expanded], dim=-1))
+        enriched_replays = replays + gate * live_expanded
+
+        # Pool the enriched replays safely
         replay_counts = (~replay_pad_mask).float().sum(dim=1, keepdim=True).clamp(min=1)
         enriched_replays = enriched_replays.masked_fill(
             replay_pad_mask.unsqueeze(-1), 0.0
         )
-        enriched_replays_pooled = enriched_replays.sum(dim=1) / replay_counts  # [B, D]
 
-        # Residual: add original replay mean so gradient flows even with random attn
-        original_replays_masked = replays.masked_fill(
-            replay_pad_mask.unsqueeze(-1), 0.0
-        )
-        original_replay_mean = (
-            original_replays_masked.sum(dim=1) / replay_counts
-        )  # [B, D]
-        enriched_replays_pooled = self.norm_replay(
-            original_replay_mean + enriched_replays_pooled
+        replay_vec = self.norm_replay(
+            enriched_replays.sum(dim=1) / replay_counts
         )  # [B, D]
 
         # --- 5. Fusion gate ---
-        live_vec = enriched_live.squeeze(1)  # [B, D]
-        replay_vec = enriched_replays_pooled  # [B, D]
-
         alpha = self.fusion_gate(torch.cat([live_vec, replay_vec], dim=-1))  # [B, 1]
         fused = alpha * live_vec + (1 - alpha) * replay_vec  # [B, D]
-
-        # Fallback for samples with zero real replays
-        if all_padded.any():
-            fused[all_padded] = live_vec[all_padded]
 
         return self.out_proj(fused), attn_weights
 
