@@ -421,6 +421,10 @@ def main(args):
             uncertainty_weighter.load_state_dict(load["uw"])
 
         optimizer.load_state_dict(load["optimizer"])
+        for group in optimizer.param_groups:
+            group["weight_decay"] = (
+                weight_decay  # picks up the new --weight_decay value
+            )
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=max_epochs, eta_min=1e-6
         )
