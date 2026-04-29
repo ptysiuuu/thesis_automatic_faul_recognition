@@ -391,6 +391,11 @@ class BidirCrossAttentionAggregate(nn.Module):
         self.bn_replay_down = nn.Linear(feat_dim, bn)
         self.bn_replay_up = nn.Linear(bn, feat_dim)
 
+        nn.init.zeros_(self.bn_live_down.weight)
+        nn.init.zeros_(self.bn_live_up.weight)
+        nn.init.zeros_(self.bn_replay_down.weight)
+        nn.init.zeros_(self.bn_replay_up.weight)
+
         # --- Layer norms ---
         self.norm_live = nn.LayerNorm(feat_dim)
         self.norm_replay = nn.LayerNorm(feat_dim)
@@ -407,6 +412,8 @@ class BidirCrossAttentionAggregate(nn.Module):
 
         # --- Final projection ---
         self.out_proj = nn.Linear(feat_dim, feat_dim)
+        nn.init.eye_(self.out_proj.weight)  # identity initialization
+        nn.init.zeros_(self.out_proj.bias)
 
     # ------------------------------------------------------------------
     def forward(self, mvimages: torch.Tensor):
@@ -483,7 +490,7 @@ class BidirCrossAttentionAggregate(nn.Module):
         if all_padded.any():
             fused[all_padded] = live_vec[all_padded]
 
-        return self.norm_out(self.out_proj(fused)), attn_weights
+        return self.out_proj(fused), attn_weights
 
 
 class MVAggregate(nn.Module):
