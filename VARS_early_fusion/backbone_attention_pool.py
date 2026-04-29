@@ -118,7 +118,7 @@ class MViTv2SBackboneAttnPool(nn.Module):
         # patch_tokens: [B, T'*H'*W', D]
 
         # Reshape to [B*T', H'*W', D] then attention pool → [B*T', D] → [B, T', D]
-        tokens_per_t = patch_tokens.view(B * Tp, Hp * Wp, self.feat_dim)
+        tokens_per_t = patch_tokens.reshape(B * Tp, Hp * Wp, self.feat_dim)
         pooled_spatial = self.spatial_pool(tokens_per_t)  # [B*T', D]
         return pooled_spatial.view(B, Tp, self.feat_dim)  # [B, T', D]
 
