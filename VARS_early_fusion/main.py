@@ -392,7 +392,11 @@ def main(args):
 
     if args.continue_training and path_to_model_weights != "":
         load = torch.load(path_to_model_weights)
-        model.load_state_dict(load["state_dict"])
+        missing, unexpected = model.load_state_dict(load['state_dict'], strict=False)
+        if missing:
+            logging.info(f"New parameters (random init): {missing}")
+        if unexpected:
+            logging.info(f"Dropped parameters (not in model): {unexpected}")
         epoch_start = load["epoch"]
 
         if epoch_start > freeze_epoch:
