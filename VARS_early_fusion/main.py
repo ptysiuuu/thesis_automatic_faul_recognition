@@ -321,7 +321,7 @@ def main(args):
 
     if path_to_model_weights != "":
         load = torch.load(path_to_model_weights)
-        missing, unexpected = model.load_state_dict(load['state_dict'], strict=False)
+        missing, unexpected = model.load_state_dict(load["state_dict"], strict=False)
         if missing:
             logging.info(f"New parameters (random init): {missing}")
         if unexpected:
@@ -392,7 +392,7 @@ def main(args):
 
     if args.continue_training and path_to_model_weights != "":
         load = torch.load(path_to_model_weights)
-        missing, unexpected = model.load_state_dict(load['state_dict'], strict=False)
+        missing, unexpected = model.load_state_dict(load["state_dict"], strict=False)
         if missing:
             logging.info(f"New parameters (random init): {missing}")
         if unexpected:
@@ -424,19 +424,35 @@ def main(args):
 
         ema = EMA(model, decay=ema_decay)
         if "ema" in load:
-            ema.load_state_dict(load["ema"])
+            try:
+                ema.load_state_dict(load["ema"])
+            except Exception as e:
+                logging.warning(
+                    f"Could not restore EMA state ({e}). Reinitialising EMA from current weights."
+                )
+
         if uncertainty_weighter is not None and "uw" in load and load["uw"] is not None:
             uncertainty_weighter.load_state_dict(load["uw"])
 
-        optimizer.load_state_dict(load["optimizer"])
-        for group in optimizer.param_groups:
-            group["weight_decay"] = (
-                weight_decay  # picks up the new --weight_decay value
+        try:
+            optimizer.load_state_dict(load["optimizer"])
+            for group in optimizer.param_groups:
+                group["weight_decay"] = weight_decay
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=max_epochs, eta_min=1e-6
             )
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=max_epochs, eta_min=1e-6
-        )
-        scheduler.load_state_dict(load["scheduler"])
+            scheduler.load_state_dict(load["scheduler"])
+            logging.info("Optimizer and scheduler state restored from checkpoint.")
+        except (ValueError, KeyError) as e:
+            logging.warning(
+                f"Could not restore optimizer/scheduler state ({e}). "
+                f"Starting optimizer fresh — fast-forwarding scheduler to epoch {epoch_start}."
+            )
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=max_epochs, eta_min=1e-6
+            )
+            for _ in range(epoch_start):
+                scheduler.step()
 
     else:
         optimizer = torch.optim.AdamW(
