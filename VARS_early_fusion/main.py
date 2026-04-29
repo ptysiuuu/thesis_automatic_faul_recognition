@@ -321,7 +321,11 @@ def main(args):
 
     if path_to_model_weights != "":
         load = torch.load(path_to_model_weights)
-        model.load_state_dict(load["state_dict"])
+        missing, unexpected = model.load_state_dict(load['state_dict'], strict=False)
+        if missing:
+            logging.info(f"New parameters (random init): {missing}")
+        if unexpected:
+            logging.info(f"Dropped parameters (not in model): {unexpected}")
         logging.info(f"Loaded weights from {path_to_model_weights}")
 
     # --- evaluation-only paths ---
