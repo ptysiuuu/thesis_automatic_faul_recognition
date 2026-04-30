@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=VARS_transformer_smoothin
+#SBATCH --job-name=VARS_transformer_smoothing
 #SBATCH --partition=plgrid-gpu-a100
 #SBATCH --account=plggolemml26-gpu-a100
 #SBATCH --nodes=1
