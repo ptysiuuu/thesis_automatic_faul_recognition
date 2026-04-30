@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=VARS_exp1_bidir
+#SBATCH --job-name=VARS_transformer_smoothin
 #SBATCH --partition=plgrid-gpu-a100
 #SBATCH --account=plggolemml26-gpu-a100
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=12:00:00
-#SBATCH --output=VARS_exp1_%x_%j.out
+#SBATCH --time=16:00:00
+#SBATCH --output=VARS_transformer_smoothing_%x_%j.out
 
 DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
 
@@ -18,15 +18,15 @@ cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion
 python main.py \
     --path                "$DATASET_PATH" \
     --pre_model           mvit_v2_s \
-    --pooling_type        bidir_crossattn \
+    --pooling_type        transformer \
     --uncertainty_weighting \
-    --freeze_epoch        7 \
+    --freeze_epoch        8 \
     --batch_size          4 \
     --accum_steps         1 \
     --LR                  1e-4 \
-    --weight_decay        1e-3 \
-    --max_epochs          50 \
-    --patience            12 \
+    --weight_decay        5e-3 \
+    --max_epochs          60 \
+    --patience            15 \
     --num_views           5 \
     --fps                 17 \
     --start_frame         63 \
@@ -37,7 +37,7 @@ python main.py \
     --aux_weight          0.2 \
     --ema_decay           0.999 \
     --use_tta \
-    --model_name          "VARS_exp1_bidir_crossattn" \
+    --model_name          "VARS_transformer_smoothing" \
     --GPU                 0 \
     --max_num_worker      16 \
     --only_evaluation     3

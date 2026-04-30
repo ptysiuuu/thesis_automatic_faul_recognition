@@ -475,9 +475,9 @@ class MVAggregate(nn.Module):
 
         self.fc_action = nn.Sequential(
             nn.LayerNorm(feat_dim),
-            nn.Dropout(p=0.3),
+            nn.Dropout(p=0.5),
             nn.Linear(feat_dim, feat_dim),
-            nn.Dropout(p=0.3),
+            nn.Dropout(p=0.5),
             nn.Linear(feat_dim, 8),
         )
 

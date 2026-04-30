@@ -10,21 +10,17 @@ import json
 from SoccerNet.Evaluation.MV_FoulRecognition import evaluate
 from tqdm import tqdm
 
-
 # ---------------------------------------------------------------------------
 # Ordinal severity helpers
 # ---------------------------------------------------------------------------
 
 
-def ordinal_targets(labels_int, num_thresholds=3, device="cpu"):
-    """
-    Convert integer severity labels (0-3) into K-1 binary threshold targets.
-      t[:,k] = 1  iff  label > k
-    Shape: (B, num_thresholds)
-    """
+def ordinal_targets(labels_int, num_thresholds=3, device="cpu", smoothing=0.1):
     targets = torch.stack(
         [(labels_int > k).float() for k in range(num_thresholds)], dim=1
     )
+    # Smooth: push 1s down to 0.9, 0s up to 0.1
+    targets = targets * (1 - smoothing) + smoothing * 0.5
     return targets.to(device)
 
 
@@ -35,7 +31,7 @@ def ordinal_loss(logits, labels_int):
     labels_int : (B,) integer 0-3
     """
     targets = ordinal_targets(
-        labels_int, num_thresholds=logits.shape[1], device=logits.device
+        labels_int, num_thresholds=logits.shape[1], device=logits.device, smoothing=0.1
     )
     return F.binary_cross_entropy_with_logits(logits, targets)
 
@@ -298,7 +294,11 @@ def trainer(
                     "ema": ema.state_dict(),
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict(),
-                    "uw": uncertainty_weighter.state_dict() if uncertainty_weighter is not None else None,
+                    "uw": (
+                        uncertainty_weighter.state_dict()
+                        if uncertainty_weighter is not None
+                        else None
+                    ),
                 },
                 os.path.join(best_model_path, "best_model.pth.tar"),
             )
@@ -343,7 +343,11 @@ def trainer(
                 "ema": ema.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "scheduler": scheduler.state_dict(),
-                "uw": uncertainty_weighter.state_dict() if uncertainty_weighter is not None else None,
+                "uw": (
+                    uncertainty_weighter.state_dict()
+                    if uncertainty_weighter is not None
+                    else None
+                ),
             },
             os.path.join(best_model_path, f"{epoch + 1}_model.pth.tar"),
         )
@@ -469,7 +473,9 @@ def _train_epoch(
             ) / 4.0
 
             if uncertainty_weighter is not None:
-                total_loss = uncertainty_weighter([loss_sev, loss_act]) + aux_weight * loss_aux
+                total_loss = (
+                    uncertainty_weighter([loss_sev, loss_act]) + aux_weight * loss_aux
+                )
             else:
                 total_loss = loss_sev + loss_act + aux_weight * loss_aux
 
