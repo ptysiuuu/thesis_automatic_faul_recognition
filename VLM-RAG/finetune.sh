@@ -22,7 +22,7 @@ conda activate /net/tscratch/people/plgaszos/conda_envs/vlm
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VLM-RAG
 
 pip install peft trl qwen-vl-utils --quiet
-
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 python finetune_vlm.py \
     --dataset_dir  /net/tscratch/people/plgaszos/vlm_dataset \
     --output_dir   /net/tscratch/people/plgaszos/vlm_finetuned \
@@ -31,7 +31,7 @@ python finetune_vlm.py \
     --max_epochs   5 \
     --batch_size   1 \
     --grad_accum   8 \
-    --lr           2e-4
+    --lr           2e-4 \
     --max_train_samples 2292
 
 echo "Finetuning done."
