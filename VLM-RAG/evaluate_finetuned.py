@@ -30,18 +30,24 @@ import h5py
 import torch
 from tqdm import tqdm
 
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 from peft import PeftModel
 
 from law12_rag import Law12RAG
 from vlm_classifier import (
-    build_prompt, parse_response, SYSTEM_PROMPT,
-    ACTION_CLASSES, SEVERITY_CLASSES, ACTION_TO_IDX, SEVERITY_TO_IDX,
+    build_prompt,
+    parse_response,
+    SYSTEM_PROMPT,
+    ACTION_CLASSES,
+    SEVERITY_CLASSES,
+    ACTION_TO_IDX,
+    SEVERITY_TO_IDX,
 )
 from evaluate_vlm import load_annotations, compute_metrics
 
 try:
     from qwen_vl_utils import process_vision_info
+
     HAS_QWEN_UTILS = True
 except ImportError:
     HAS_QWEN_UTILS = False
@@ -50,6 +56,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Model loader
 # ---------------------------------------------------------------------------
+
 
 def load_model(
     base_model_name: str,
@@ -61,10 +68,8 @@ def load_model(
     Returns (model, processor)
     """
     print(f"Loading base model: {base_model_name}")
-    processor = AutoProcessor.from_pretrained(
-        base_model_name, trust_remote_code=True
-    )
-    model = Qwen2VLForConditionalGeneration.from_pretrained(
+    processor = AutoProcessor.from_pretrained(base_model_name, trust_remote_code=True)
+    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         base_model_name,
         torch_dtype=torch.bfloat16,
         device_map="cuda",
@@ -87,11 +92,12 @@ def load_model(
 # Single-sample inference
 # ---------------------------------------------------------------------------
 
+
 @torch.no_grad()
 def classify_sample(
     model,
     processor,
-    frames_per_view: list,   # List[List[PIL.Image]]
+    frames_per_view: list,  # List[List[PIL.Image]]
     strategy: str,
     rag: Law12RAG,
     action_hint: str = "Dont know",
@@ -103,13 +109,14 @@ def classify_sample(
     """
     # RAG context
     if strategy != "zero_shot":
-        query   = rag.build_query(action_hint)
+        query = rag.build_query(action_hint)
         law12_ctx = rag.retrieve(query)
     else:
         law12_ctx = ""
 
-    prompt = build_prompt(strategy, n_views=len(frames_per_view),
-                          law12_context=law12_ctx)
+    prompt = build_prompt(
+        strategy, n_views=len(frames_per_view), law12_context=law12_ctx
+    )
 
     # Build message
     content = []
@@ -122,7 +129,7 @@ def classify_sample(
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user",   "content": content},
+        {"role": "user", "content": content},
     ]
 
     if HAS_QWEN_UTILS:
@@ -155,7 +162,7 @@ def classify_sample(
         temperature=None,
         top_p=None,
     )
-    generated = output_ids[:, inputs["input_ids"].shape[1]:]
+    generated = output_ids[:, inputs["input_ids"].shape[1] :]
     raw = processor.batch_decode(generated, skip_special_tokens=True)[0]
 
     action_idx, severity_idx = parse_response(raw)
@@ -165,6 +172,7 @@ def classify_sample(
 # ---------------------------------------------------------------------------
 # Decode to SoccerNet predictions.json format
 # ---------------------------------------------------------------------------
+
 
 def build_predictions_json(
     action_ids: list,
@@ -178,9 +186,9 @@ def build_predictions_json(
     actions = {}
     severity_to_offence = {
         0: ("No offence", ""),
-        1: ("Offence",    "1.0"),
-        2: ("Offence",    "3.0"),
-        3: ("Offence",    "5.0"),
+        1: ("Offence", "1.0"),
+        2: ("Offence", "3.0"),
+        3: ("Offence", "5.0"),
     }
 
     for action_id, pred_act, pred_sev in zip(action_ids, pred_actions, pred_severities):
@@ -192,8 +200,8 @@ def build_predictions_json(
         offence, severity = severity_to_offence[pred_sev]
         actions[action_id] = {
             "Action class": ACTION_CLASSES[pred_act],
-            "Offence":      offence,
-            "Severity":     severity,
+            "Offence": offence,
+            "Severity": severity,
         }
 
     return {"Set": set_name, "Actions": actions}
@@ -203,6 +211,7 @@ def build_predictions_json(
 # Full evaluation loop
 # ---------------------------------------------------------------------------
 
+
 def evaluate_config(
     model,
     processor,
@@ -211,10 +220,10 @@ def evaluate_config(
     strategy: str,
     rag: Law12RAG,
     frames_per_view: int = 4,
-    use_gt_hint: bool = False,   # True = use ground truth for RAG query
-                                  # False = use "Dont know" (realistic)
+    use_gt_hint: bool = False,  # True = use ground truth for RAG query
+    # False = use "Dont know" (realistic)
 ) -> dict:
-    y_true_action, y_pred_action   = [], []
+    y_true_action, y_pred_action = [], []
     y_true_severity, y_pred_severity = [], []
     predictions_raw = {}
 
@@ -248,7 +257,7 @@ def evaluate_config(
             if use_gt_hint:
                 hint = ACTION_CLASSES[sample["action"]]
             else:
-                hint = "Dont know"   # realistic: we don't know the action
+                hint = "Dont know"  # realistic: we don't know the action
 
             try:
                 act_idx, sev_idx, raw = classify_sample(
@@ -268,15 +277,18 @@ def evaluate_config(
             y_true_severity.append(sample["severity"])
             y_pred_severity.append(sev_idx)
             predictions_raw[action_id] = {
-                "pred_action": act_idx, "pred_severity": sev_idx,
+                "pred_action": act_idx,
+                "pred_severity": sev_idx,
                 "true_action": sample["action"],
                 "true_severity": sample["severity"],
                 "raw": raw,
             }
 
     metrics = compute_metrics(
-        y_true_action, y_pred_action,
-        y_true_severity, y_pred_severity,
+        y_true_action,
+        y_pred_action,
+        y_true_severity,
+        y_pred_severity,
     )
     metrics["predictions_raw"] = predictions_raw
 
@@ -295,6 +307,7 @@ def evaluate_config(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -310,16 +323,16 @@ def main(args):
     # Define configurations to evaluate
     configs = [
         # (config_name, adapter_path, strategy, use_gt_hint)
-        ("base_zero_shot",        None,             "zero_shot",      False),
-        ("base_rule_grounded",    None,             "rule_grounded",  False),
-        ("finetuned_zero_shot",   args.adapter_path, "zero_shot",     False),
+        ("base_zero_shot", None, "zero_shot", False),
+        ("base_rule_grounded", None, "rule_grounded", False),
+        ("finetuned_zero_shot", args.adapter_path, "zero_shot", False),
         ("finetuned_rule_grounded", args.adapter_path, "rule_grounded", False),
         # Two-stage: use predicted action (from zero_shot pass) as RAG hint
         # Implemented below separately
     ]
 
     all_results = {}
-    loaded_models = {}   # cache to avoid reloading same model twice
+    loaded_models = {}  # cache to avoid reloading same model twice
 
     for config_name, adapter_path, strategy, use_gt_hint in configs:
         print(f"\n{'='*60}")
@@ -351,9 +364,11 @@ def main(args):
         with open(pred_path, "w") as f:
             json.dump(metrics["predictions_soccernet"], f)
         print(f"  Predictions saved to {pred_path}")
-        print(f"  LB: {metrics.get('leaderboard_value', 0):.4f} | "
-              f"Act BA: {metrics.get('balanced_acc_action', 0):.2f} | "
-              f"Sev BA: {metrics.get('balanced_acc_severity', 0):.2f}")
+        print(
+            f"  LB: {metrics.get('leaderboard_value', 0):.4f} | "
+            f"Act BA: {metrics.get('balanced_acc_action', 0):.2f} | "
+            f"Sev BA: {metrics.get('balanced_acc_severity', 0):.2f}"
+        )
 
     # Comparison table
     print(f"\n{'='*75}")
@@ -361,16 +376,26 @@ def main(args):
     print(f"{'Config':<30} {'Parse%':>7} {'Act BA':>8} {'Sev BA':>8} {'LB Val':>8}")
     print("-" * 65)
     for name, m in all_results.items():
-        print(f"{name:<30} {m.get('parse_rate',0):>7.1f} "
-              f"{m.get('balanced_acc_action',0):>8.2f} "
-              f"{m.get('balanced_acc_severity',0):>8.2f} "
-              f"{m.get('leaderboard_value',0):>8.4f}")
+        print(
+            f"{name:<30} {m.get('parse_rate',0):>7.1f} "
+            f"{m.get('balanced_acc_action',0):>8.2f} "
+            f"{m.get('balanced_acc_severity',0):>8.2f} "
+            f"{m.get('leaderboard_value',0):>8.4f}"
+        )
 
     # Save summary
     summary = {
-        k: {kk: vv for kk, vv in v.items()
-            if kk not in ("predictions_raw", "predictions_soccernet",
-                          "confusion_action", "confusion_severity")}
+        k: {
+            kk: vv
+            for kk, vv in v.items()
+            if kk
+            not in (
+                "predictions_raw",
+                "predictions_soccernet",
+                "confusion_action",
+                "confusion_severity",
+            )
+        }
         for k, v in all_results.items()
     }
     with open(output_dir / "summary.json", "w") as f:
@@ -380,14 +405,16 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--hdf5_path",      required=True)
-    parser.add_argument("--annotations",    required=True)
-    parser.add_argument("--adapter_path",   default=None,
-                        help="Path to LoRA adapters. If None, only base model configs run.")
-    parser.add_argument("--base_model",
-                        default="Qwen/Qwen2.5-VL-7B-Instruct")
-    parser.add_argument("--law12_pdf",      default=None)
+    parser.add_argument("--hdf5_path", required=True)
+    parser.add_argument("--annotations", required=True)
+    parser.add_argument(
+        "--adapter_path",
+        default=None,
+        help="Path to LoRA adapters. If None, only base model configs run.",
+    )
+    parser.add_argument("--base_model", default="Qwen/Qwen2.5-VL-7B-Instruct")
+    parser.add_argument("--law12_pdf", default=None)
     parser.add_argument("--frames_per_view", type=int, default=4)
-    parser.add_argument("--output_dir",     default="vlm_test_results")
+    parser.add_argument("--output_dir", default="vlm_test_results")
     args = parser.parse_args()
     main(args)

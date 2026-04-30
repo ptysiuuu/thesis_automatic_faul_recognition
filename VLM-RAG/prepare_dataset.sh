@@ -11,9 +11,12 @@
 #SBATCH --mem=64G
 #SBATCH --time=04:00:00
 #SBATCH --output=vlm_prep_%x_%j.out
+export HF_HOME=/net/tscratch/people/plgaszos/.cache/huggingface
+export TRANSFORMERS_CACHE=$HF_HOME
+mkdir -p $HF_HOME
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
-conda activate vars
+conda activate /net/tscratch/people/plgaszos/conda_envs/vlm
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion
 
 pip install sentence-transformers pymupdf --quiet

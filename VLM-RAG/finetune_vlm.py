@@ -40,7 +40,7 @@ from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 
 from transformers import (
-    Qwen2VLForConditionalGeneration,
+    Qwen2_5_VLForConditionalGeneration,
     AutoProcessor,
     TrainingArguments,
     Trainer,
@@ -53,10 +53,10 @@ from peft import (
     prepare_model_for_kbit_training,
 )
 
-
 # ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
+
 
 class FoulVLMDataset(Dataset):
     """
@@ -95,7 +95,7 @@ class FoulVLMDataset(Dataset):
         # Build message in Qwen2-VL format
         # User turn: contains <image> placeholders + text
         # Assistant turn: JSON answer
-        user_content   = sample["conversations"][0]["content"]
+        user_content = sample["conversations"][0]["content"]
         assistant_text = sample["conversations"][1]["content"]
 
         # Qwen2-VL expects content as list of dicts with type image/text
@@ -112,7 +112,7 @@ class FoulVLMDataset(Dataset):
                     img_idx += 1
 
         messages = [
-            {"role": "user",      "content": content_list},
+            {"role": "user", "content": content_list},
             {"role": "assistant", "content": assistant_text},
         ]
 
@@ -127,14 +127,12 @@ def collate_fn(batch, processor):
     from qwen_vl_utils import process_vision_info
 
     all_messages = [item[0] for item in batch]
-    all_images   = [item[1] for item in batch]
+    all_images = [item[1] for item in batch]
 
     # Apply chat template — includes both user and assistant turns
     # We need to compute labels for the assistant turn only
     texts = [
-        processor.apply_chat_template(
-            msgs, tokenize=False, add_generation_prompt=False
-        )
+        processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
         for msgs in all_messages
     ]
 
@@ -168,7 +166,7 @@ def collate_fn(batch, processor):
         # Find last occurrence of assistant start token sequence
         start_pos = -1
         for j in range(len(seq) - len(assistant_token), -1, -1):
-            if seq[j:j+len(assistant_token)] == assistant_token:
+            if seq[j : j + len(assistant_token)] == assistant_token:
                 start_pos = j + len(assistant_token)
                 break
 
@@ -215,17 +213,16 @@ class FoulVLMTrainer(Trainer):
 # Main finetuning function
 # ---------------------------------------------------------------------------
 
+
 def main(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading model: {args.model_name}")
-    processor = AutoProcessor.from_pretrained(
-        args.model_name, trust_remote_code=True
-    )
+    processor = AutoProcessor.from_pretrained(args.model_name, trust_remote_code=True)
 
     # Load in bf16 — fits on single A100 40GB for 7B model
-    model = Qwen2VLForConditionalGeneration.from_pretrained(
+    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         args.model_name,
         torch_dtype=torch.bfloat16,
         device_map="cuda",
@@ -252,7 +249,7 @@ def main(args):
     lora_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,
         r=args.lora_rank,
-        lora_alpha=args.lora_rank * 2,   # alpha = 2 * rank is standard
+        lora_alpha=args.lora_rank * 2,  # alpha = 2 * rank is standard
         lora_dropout=0.1,
         bias="none",
         # Target only LM attention layers — NOT vision encoder
@@ -301,8 +298,8 @@ def main(args):
     # ---------------------------------------------------------------------------
 
     steps_per_epoch = len(train_dataset) // (args.batch_size * args.grad_accum)
-    total_steps     = steps_per_epoch * args.max_epochs
-    warmup_steps    = max(10, total_steps // 10)
+    total_steps = steps_per_epoch * args.max_epochs
+    warmup_steps = max(10, total_steps // 10)
 
     training_args = TrainingArguments(
         output_dir=str(output_dir),
@@ -326,9 +323,9 @@ def main(args):
         greater_is_better=False,
         save_total_limit=3,
         dataloader_num_workers=4,
-        remove_unused_columns=False,   # critical for multi-image batches
+        remove_unused_columns=False,  # critical for multi-image batches
         report_to="none",
-        gradient_checkpointing=True,   # saves memory for 7B model
+        gradient_checkpointing=True,  # saves memory for 7B model
         gradient_checkpointing_kwargs={"use_reentrant": False},
     )
 
@@ -354,16 +351,15 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_dir",       required=True)
-    parser.add_argument("--output_dir",        required=True)
-    parser.add_argument("--model_name",
-                        default="Qwen/Qwen2.5-VL-7B-Instruct")
-    parser.add_argument("--lora_rank",         type=int,   default=16)
-    parser.add_argument("--max_epochs",        type=int,   default=5)
-    parser.add_argument("--batch_size",        type=int,   default=1)
-    parser.add_argument("--grad_accum",        type=int,   default=8)
-    parser.add_argument("--lr",                type=float, default=2e-4)
-    parser.add_argument("--max_train_samples", type=int,   default=None)
-    parser.add_argument("--max_eval_samples",  type=int,   default=None)
+    parser.add_argument("--dataset_dir", required=True)
+    parser.add_argument("--output_dir", required=True)
+    parser.add_argument("--model_name", default="Qwen/Qwen2.5-VL-7B-Instruct")
+    parser.add_argument("--lora_rank", type=int, default=16)
+    parser.add_argument("--max_epochs", type=int, default=5)
+    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--grad_accum", type=int, default=8)
+    parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument("--max_train_samples", type=int, default=None)
+    parser.add_argument("--max_eval_samples", type=int, default=None)
     args = parser.parse_args()
     main(args)

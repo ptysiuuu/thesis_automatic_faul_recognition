@@ -13,8 +13,12 @@
 #SBATCH --time=08:00:00
 #SBATCH --output=vlm_finetune_%x_%j.out
 
+export HF_HOME=/net/tscratch/people/plgaszos/.cache/huggingface
+export TRANSFORMERS_CACHE=$HF_HOME
+mkdir -p $HF_HOME
+
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
-conda activate vars
+conda activate /net/tscratch/people/plgaszos/conda_envs/vlm
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion
 
 pip install peft trl qwen-vl-utils --quiet

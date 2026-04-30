@@ -41,8 +41,11 @@ from tqdm import tqdm
 # Reuse from your existing pipeline
 from law12_rag import Law12RAG
 from vlm_classifier import (
-    build_prompt, ACTION_CLASSES, SEVERITY_CLASSES,
-    ACTION_TO_IDX, SEVERITY_TO_IDX,
+    build_prompt,
+    ACTION_CLASSES,
+    SEVERITY_CLASSES,
+    ACTION_TO_IDX,
+    SEVERITY_TO_IDX,
 )
 
 # ---------------------------------------------------------------------------
@@ -50,11 +53,11 @@ from vlm_classifier import (
 # ---------------------------------------------------------------------------
 
 OFFENCE_SEVERITY_MAP = {
-    ("No offence", ""):    0,
-    ("No Offence", ""):    0,
-    ("Offence",    "1.0"): 1,
-    ("Offence",    "3.0"): 2,
-    ("Offence",    "5.0"): 3,
+    ("No offence", ""): 0,
+    ("No Offence", ""): 0,
+    ("Offence", "1.0"): 1,
+    ("Offence", "3.0"): 2,
+    ("Offence", "5.0"): 3,
 }
 
 
@@ -65,17 +68,19 @@ def load_split_annotations(data_root: str, split: str) -> dict:
 
     samples = {}
     for action_id, action_data in data["Actions"].items():
-        action_class   = action_data.get("Action class", "")
-        offence_class  = action_data.get("Offence", "")
+        action_class = action_data.get("Action class", "")
+        offence_class = action_data.get("Offence", "")
         severity_class = action_data.get("Severity", "")
 
         if action_class in {"Dont know", ""}:
             continue
         if offence_class in {"Between", ""} and action_class != "Dive":
             continue
-        if severity_class in {"2.0", "4.0"} and \
-                action_class != "Dive" and \
-                offence_class not in ("No offence", "No Offence"):
+        if (
+            severity_class in {"2.0", "4.0"}
+            and action_class != "Dive"
+            and offence_class not in ("No offence", "No Offence")
+        ):
             continue
 
         if offence_class in {"Between", ""}:
@@ -95,13 +100,13 @@ def load_split_annotations(data_root: str, split: str) -> dict:
         if action_idx == -1:
             continue
 
-        clips = list(action_data.get("Clips", {}).keys())
+        clips = [c["Url"].split("/")[-1] for c in action_data.get("Clips", [])]
         samples[action_id] = {
-            "action":         action_idx,
-            "action_name":    action_class,
-            "severity":       severity_idx,
-            "severity_name":  SEVERITY_CLASSES[severity_idx],
-            "clips":          clips,
+            "action": action_idx,
+            "action_name": action_class,
+            "severity": severity_idx,
+            "severity_name": SEVERITY_CLASSES[severity_idx],
+            "clips": clips,
         }
     return samples
 
@@ -109,6 +114,7 @@ def load_split_annotations(data_root: str, split: str) -> dict:
 # ---------------------------------------------------------------------------
 # Frame extraction and saving
 # ---------------------------------------------------------------------------
+
 
 def extract_and_save_frames(
     hdf5: h5py.File,
@@ -125,7 +131,7 @@ def extract_and_save_frames(
     if key not in hdf5:
         return []
 
-    frames_np = hdf5[key][:]   # [T, H, W, C] uint8
+    frames_np = hdf5[key][:]  # [T, H, W, C] uint8
     T = len(frames_np)
     if T < 2:
         return []
@@ -146,10 +152,11 @@ def extract_and_save_frames(
 # Prompt and answer construction
 # ---------------------------------------------------------------------------
 
+
 def build_training_sample(
     action_id: str,
     sample: dict,
-    image_paths: list,      # flat list of all frame paths
+    image_paths: list,  # flat list of all frame paths
     n_views: int,
     rag: Law12RAG,
     strategy: str,
@@ -162,8 +169,8 @@ def build_training_sample(
                     (teaches the model WHY, not just WHAT)
     """
     # Build RAG context using ground truth action (we have labels during training)
-    query       = rag.build_query(sample["action_name"])
-    law12_ctx   = rag.retrieve(query)
+    query = rag.build_query(sample["action_name"])
+    law12_ctx = rag.retrieve(query)
     prompt_text = build_prompt(strategy, n_views=n_views, law12_context=law12_ctx)
 
     # Build user content: interleave view labels + <image> tags
@@ -181,7 +188,7 @@ def build_training_sample(
     user_content += f"\n{prompt_text}"
 
     # Build ground truth answer
-    action_name   = sample["action_name"]
+    action_name = sample["action_name"]
     severity_name = sample["severity_name"]
 
     if augment_answer:
@@ -194,22 +201,26 @@ def build_training_sample(
             3: "Excessive force or brutality — endangers opponent's safety, red card.",
         }
         reasoning = reasoning_map[sample["severity"]]
-        answer = json.dumps({
-            "action":    action_name,
-            "severity":  severity_name,
-            "reasoning": reasoning,
-        })
+        answer = json.dumps(
+            {
+                "action": action_name,
+                "severity": severity_name,
+                "reasoning": reasoning,
+            }
+        )
     else:
-        answer = json.dumps({
-            "action":   action_name,
-            "severity": severity_name,
-        })
+        answer = json.dumps(
+            {
+                "action": action_name,
+                "severity": severity_name,
+            }
+        )
 
     return {
-        "id":     f"action_{action_id}",
+        "id": f"action_{action_id}",
         "images": image_paths,
         "conversations": [
-            {"role": "user",      "content": user_content.strip()},
+            {"role": "user", "content": user_content.strip()},
             {"role": "assistant", "content": answer},
         ],
     }
@@ -219,9 +230,10 @@ def build_training_sample(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main(args):
-    output_dir   = Path(args.output_dir)
-    frames_dir   = output_dir / "frames"
+    output_dir = Path(args.output_dir)
+    frames_dir = output_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
     # Initialize RAG
@@ -234,7 +246,7 @@ def main(args):
     splits_to_process = {
         "Train": "train.jsonl",
         "Valid": "valid.jsonl",
-        "Test":  "test.jsonl",
+        "Test": "test.jsonl",
     }
 
     for split, out_fname in splits_to_process.items():
@@ -293,19 +305,19 @@ def main(args):
     # Write dataset config for LLaMA-Factory
     dataset_config = {
         "vlm_train": {
-            "file_name":   str(output_dir / "train.jsonl"),
-            "formatting":  "sharegpt",
+            "file_name": str(output_dir / "train.jsonl"),
+            "formatting": "sharegpt",
             "columns": {
                 "messages": "conversations",
-                "images":   "images",
+                "images": "images",
             },
         },
         "vlm_valid": {
-            "file_name":   str(output_dir / "valid.jsonl"),
-            "formatting":  "sharegpt",
+            "file_name": str(output_dir / "valid.jsonl"),
+            "formatting": "sharegpt",
             "columns": {
                 "messages": "conversations",
-                "images":   "images",
+                "images": "images",
             },
         },
     }
@@ -318,14 +330,15 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--hdf5_root",      required=True)
-    parser.add_argument("--data_root",      required=True)
-    parser.add_argument("--output_dir",     required=True)
-    parser.add_argument("--law12_pdf",      default=None)
+    parser.add_argument("--hdf5_root", required=True)
+    parser.add_argument("--data_root", required=True)
+    parser.add_argument("--output_dir", required=True)
+    parser.add_argument("--law12_pdf", default=None)
     parser.add_argument("--frames_per_view", type=int, default=4)
-    parser.add_argument("--strategy",
-                        default="rule_grounded",
-                        choices=["zero_shot", "rule_grounded",
-                                 "chain_of_thought", "few_shot"])
+    parser.add_argument(
+        "--strategy",
+        default="rule_grounded",
+        choices=["zero_shot", "rule_grounded", "chain_of_thought", "few_shot"],
+    )
     args = parser.parse_args()
     main(args)
