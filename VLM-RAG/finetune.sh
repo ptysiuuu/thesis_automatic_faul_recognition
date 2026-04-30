@@ -34,5 +34,3 @@ python finetune_vlm.py \
     --lr           2e-4
 
 echo "Finetuning done."
-
----

@@ -28,5 +28,3 @@ python prepare_vlm_dataset.py \
     --law12_pdf       /net/tscratch/people/plgaszos/SoccerNet_Data/law12.pdf
 
 echo "Dataset prepared."
-
----
