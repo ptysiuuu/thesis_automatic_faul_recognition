@@ -253,12 +253,7 @@ def main(args):
         lora_dropout=0.1,
         bias="none",
         # Target only LM attention layers — NOT vision encoder
-        target_modules=[
-            "model.layers.*.self_attn.q_proj",
-            "model.layers.*.self_attn.k_proj",
-            "model.layers.*.self_attn.v_proj",
-            "model.layers.*.self_attn.o_proj",
-        ],
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
         # Explicitly exclude vision encoder
         modules_to_save=None,
     )
