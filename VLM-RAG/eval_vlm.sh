@@ -33,7 +33,8 @@ LAW12_PDF="$DATASET_PATH/law12.pdf"   # put your FIFA Laws PDF here
 OUTPUT_DIR="vlm_results_${BACKEND}"
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
-conda activate vars
+conda activate /net/tscratch/people/plgaszos/conda_envs/vlm
+
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VLM-RAG
 
 # Install dependencies if needed
