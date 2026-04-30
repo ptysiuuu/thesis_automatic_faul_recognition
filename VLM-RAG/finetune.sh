@@ -32,5 +32,6 @@ python finetune_vlm.py \
     --batch_size   1 \
     --grad_accum   8 \
     --lr           2e-4
+    --max_train_samples 2292
 
 echo "Finetuning done."

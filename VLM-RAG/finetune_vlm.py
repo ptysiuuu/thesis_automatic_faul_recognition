@@ -147,9 +147,9 @@ def collate_fn(batch, processor):
         text=texts,
         images=image_inputs_list if image_inputs_list else None,
         padding=True,
-        truncation=True,
-        max_length=2048,
+        truncation=False,  # never truncate — image tokens must match
         return_tensors="pt",
+        max_length=4096,
     )
 
     # Build labels: mask everything except the assistant response
