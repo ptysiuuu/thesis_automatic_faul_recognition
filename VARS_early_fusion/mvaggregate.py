@@ -26,6 +26,70 @@ class SetNorm(nn.Module):
         return x_norm * self.scale + self.bias
 
 
+class TemporalLocalizer(nn.Module):
+    """
+    Replaces mean pooling over the time dimension with learned attention pooling.
+
+    Given per-view temporal features [B, V, T', D], computes a scalar importance
+    score per (view, timestep) pair and returns a weighted sum over T'.
+
+    This lets the model focus on the contact moment rather than averaging
+    approach, contact, and aftermath frames equally.
+
+    Parameters
+    ----------
+    feat_dim : int
+        Feature dimensionality D.
+
+    Returns
+    -------
+    weighted : [B, V, D]   — temporally-pooled per-view features
+    weights  : [B, V, T']  — attention weights (sum to 1 over T' per view)
+    """
+
+    def __init__(self, feat_dim: int):
+        super().__init__()
+        self.scorer = nn.Sequential(
+            nn.Linear(feat_dim, feat_dim // 4),
+            nn.GELU(),
+            nn.Linear(feat_dim // 4, 1),
+        )
+        # Initialize to near-zero so it starts as uniform pooling
+        nn.init.zeros_(self.scorer[0].weight)
+        nn.init.zeros_(self.scorer[2].weight)
+        nn.init.zeros_(self.scorer[0].bias)
+        nn.init.zeros_(self.scorer[2].bias)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        view_mask: torch.Tensor,
+    ) -> tuple:
+        """
+        x         : [B, V, T', D]
+        view_mask : [B, V]  True = padded view
+
+        Returns (weighted [B, V, D], weights [B, V, T'])
+        """
+        B, V, T, D = x.shape
+
+        # Score each (view, timestep): [B, V, T', 1] → [B, V, T']
+        scores = self.scorer(x).squeeze(-1)
+
+        # Mask padded views: set their scores to -inf so softmax ignores them
+        # [B, V, 1] broadcast over T'
+        scores = scores.masked_fill(view_mask.unsqueeze(-1), float("-inf"))
+
+        # Softmax over time dimension for each view
+        weights = torch.softmax(scores, dim=-1)  # [B, V, T']
+        weights = torch.nan_to_num(weights, nan=0.0)  # guard all-padded views
+
+        # Weighted sum over T'
+        weighted = (x * weights.unsqueeze(-1)).sum(dim=2)  # [B, V, D]
+
+        return weighted, weights
+
+
 class WeightedAggregate(nn.Module):
     def __init__(self, model, feat_dim, lifting_net=nn.Sequential()):
         super().__init__()
@@ -120,6 +184,9 @@ class TransformerAggregate(nn.Module):
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
+        # Temporal localization: replaces mean pool over T'
+        self.temporal_localizer = TemporalLocalizer(feat_dim)
+
         nn.init.trunc_normal_(self.cls_token, std=0.02)
         nn.init.trunc_normal_(self.view_embeds, std=0.02)
         nn.init.trunc_normal_(self.temporal_embeds, std=0.02)
@@ -147,10 +214,19 @@ class TransformerAggregate(nn.Module):
         # view padding mask
         view_mask = mvimages.abs().sum(dim=(2, 3, 4, 5)) == 0
 
-        # quality gate (now operating on SetNorm-normalized features)
-        quality = self.quality_gate(raw.mean(2))
+        # --- Temporal localization: learn which frame matters most ---
+        # Returns view-level features [B, V, D] and weights [B, V, T']
+        view_features, temporal_weights = self.temporal_localizer(raw, view_mask)
+        # view_features: [B, V, D] — replaces raw.mean(dim=2)
+
+        # Quality gate still operates on the temporally-pooled features
+        quality = self.quality_gate(view_features)  # [B, V, 1]
         quality = quality.masked_fill(view_mask.unsqueeze(-1), 0.0)
-        raw = raw * (0.5 + quality.unsqueeze(2))
+
+        # Re-weight raw tokens using both quality gate and temporal attention
+        # temporal_weights: [B, V, T'] — already focused on important frames
+        # quality: [B, V, 1] — view-level importance
+        raw = raw * (0.5 + quality.unsqueeze(2))  # [B, V, T', D]
 
         # positional embeddings (added after normalization, not washed out)
         raw = raw + self.view_embeds[:, :V, :].unsqueeze(2)
@@ -165,7 +241,7 @@ class TransformerAggregate(nn.Module):
         padding_mask = torch.cat([cls_mask, pad_token_mask], dim=1)
 
         x = self.transformer(x, src_key_padding_mask=padding_mask)
-        return x[:, 0], None
+        return x[:, 0], temporal_weights  # return weights for visualization + loss
 
 
 class CrossAttentionAggregate(nn.Module):

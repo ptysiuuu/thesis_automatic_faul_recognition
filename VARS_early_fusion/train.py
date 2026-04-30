@@ -36,6 +36,29 @@ def ordinal_loss(logits, labels_int):
     return F.binary_cross_entropy_with_logits(logits, targets)
 
 
+def temporal_entropy_loss(temporal_weights):
+    """
+    Encourages temporal attention weights to be peaked (low entropy)
+    rather than uniform. This pushes the model to focus on one moment
+    rather than averaging across all frames.
+
+    temporal_weights : [B, V, T'] or None
+    Returns scalar loss (0.0 if weights is None or all-padded).
+    """
+    if temporal_weights is None:
+        return torch.tensor(0.0)
+
+    # temporal_weights: [B, V, T'], values sum to 1 over T' per view
+    # Entropy = -sum(p * log(p)), lower = more peaked = better localization
+    # Clamp to avoid log(0)
+    w = temporal_weights.clamp(min=1e-8)
+    entropy = -(w * w.log()).sum(dim=-1)  # [B, V]
+
+    # Only include non-padded views (padded views have nan weights → already 0)
+    entropy = torch.nan_to_num(entropy, nan=0.0)
+    return entropy.mean()
+
+
 def ordinal_predict(logits):
     """
     Decode ordinal logits to integer class predictions.
@@ -472,12 +495,23 @@ def _train_epoch(
                 + criterion_bce(out_handball, targets_handball)
             ) / 4.0
 
+            # Temporal entropy regularization — only during training,
+            # only if the aggregator returns temporal weights (TransformerAggregate)
+            attention = full_out[6] if not train or not use_tta else None
+            loss_temporal = (
+                temporal_entropy_loss(attention) if train else torch.tensor(0.0)
+            )
+
             if uncertainty_weighter is not None:
                 total_loss = (
-                    uncertainty_weighter([loss_sev, loss_act]) + aux_weight * loss_aux
+                    uncertainty_weighter([loss_sev, loss_act])
+                    + aux_weight * loss_aux
+                    + 0.01 * loss_temporal
                 )
             else:
-                total_loss = loss_sev + loss_act + aux_weight * loss_aux
+                total_loss = (
+                    loss_sev + loss_act + aux_weight * loss_aux + 0.01 * loss_temporal
+                )
 
             if train:
                 (total_loss / accum_steps).backward()
