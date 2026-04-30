@@ -28,9 +28,7 @@ import argparse
 import numpy as np
 from pathlib import Path
 from collections import defaultdict
-from sklearn.metrics import (
-    balanced_accuracy_score, accuracy_score, confusion_matrix
-)
+from sklearn.metrics import balanced_accuracy_score, accuracy_score, confusion_matrix
 
 import h5py
 from tqdm import tqdm
@@ -44,17 +42,16 @@ from vlm_classifier import (
     SEVERITY_TO_IDX,
 )
 
-
 # ---------------------------------------------------------------------------
 # Label loading (mirrors your data_loader.py logic)
 # ---------------------------------------------------------------------------
 
 OFFENCE_SEVERITY_MAP = {
-    ("No offence",  ""):    0,
-    ("No Offence",  ""):    0,
-    ("Offence",     "1.0"): 1,
-    ("Offence",     "3.0"): 2,
-    ("Offence",     "5.0"): 3,
+    ("No offence", ""): 0,
+    ("No Offence", ""): 0,
+    ("Offence", "1.0"): 1,
+    ("Offence", "3.0"): 2,
+    ("Offence", "5.0"): 3,
 }
 
 ACTION_FILTER = {"Dont know", ""}
@@ -73,7 +70,7 @@ def load_annotations(annotations_path: str):
 
     samples = {}
     for action_id, action_data in data["Actions"].items():
-        action_class  = action_data.get("Action class", "")
+        action_class = action_data.get("Action class", "")
         offence_class = action_data.get("Offence", "")
         severity_class = action_data.get("Severity", "")
 
@@ -82,9 +79,11 @@ def load_annotations(annotations_path: str):
             continue
         if (offence_class in OFFENCE_FILTER) and action_class != "Dive":
             continue
-        if (severity_class in SEVERITY_FILTER) and \
-                action_class != "Dive" and \
-                offence_class not in ("No offence", "No Offence"):
+        if (
+            (severity_class in SEVERITY_FILTER)
+            and action_class != "Dive"
+            and offence_class not in ("No offence", "No Offence")
+        ):
             continue
 
         # Fix borderline cases
@@ -106,11 +105,11 @@ def load_annotations(annotations_path: str):
         if action_idx == -1:
             continue
 
-        clips = list(action_data.get("Clips", {}).keys())
+        clips = [c["Url"].split("/")[-1] for c in action_data.get("Clips", [])]
         samples[action_id] = {
-            "action":   action_idx,
+            "action": action_idx,
             "severity": severity_idx,
-            "clips":    clips,
+            "clips": clips,
         }
 
     return samples
@@ -120,11 +119,12 @@ def load_annotations(annotations_path: str):
 # Metrics (matching your SoccerNet evaluator)
 # ---------------------------------------------------------------------------
 
-def compute_metrics(y_true_action, y_pred_action,
-                    y_true_severity, y_pred_severity):
+
+def compute_metrics(y_true_action, y_pred_action, y_true_severity, y_pred_severity):
     # Filter invalid predictions (-1 = parse failed)
     valid = [
-        i for i in range(len(y_pred_action))
+        i
+        for i in range(len(y_pred_action))
         if y_pred_action[i] != -1 and y_pred_severity[i] != -1
     ]
     n_valid = len(valid)
@@ -133,30 +133,30 @@ def compute_metrics(y_true_action, y_pred_action,
     if n_valid == 0:
         return {"error": "No valid predictions"}
 
-    ya_true = [y_true_action[i]   for i in valid]
-    ya_pred = [y_pred_action[i]   for i in valid]
+    ya_true = [y_true_action[i] for i in valid]
+    ya_pred = [y_pred_action[i] for i in valid]
     ys_true = [y_true_severity[i] for i in valid]
     ys_pred = [y_pred_severity[i] for i in valid]
 
-    acc_action   = accuracy_score(ya_true, ya_pred) * 100
-    bacc_action  = balanced_accuracy_score(ya_true, ya_pred) * 100
-    acc_sev      = accuracy_score(ys_true, ys_pred) * 100
-    bacc_sev     = balanced_accuracy_score(ys_true, ys_pred) * 100
-    lb_value     = (bacc_action + bacc_sev) / 2
+    acc_action = accuracy_score(ya_true, ya_pred) * 100
+    bacc_action = balanced_accuracy_score(ya_true, ya_pred) * 100
+    acc_sev = accuracy_score(ys_true, ys_pred) * 100
+    bacc_sev = balanced_accuracy_score(ys_true, ys_pred) * 100
+    lb_value = (bacc_action + bacc_sev) / 2
 
     return {
-        "n_total":             n_total,
-        "n_valid":             n_valid,
-        "parse_rate":          n_valid / n_total * 100,
-        "accuracy_action":     acc_action,
+        "n_total": n_total,
+        "n_valid": n_valid,
+        "parse_rate": n_valid / n_total * 100,
+        "accuracy_action": acc_action,
         "balanced_acc_action": bacc_action,
-        "accuracy_severity":   acc_sev,
+        "accuracy_severity": acc_sev,
         "balanced_acc_severity": bacc_sev,
-        "leaderboard_value":   lb_value,
-        "confusion_action":    confusion_matrix(
+        "leaderboard_value": lb_value,
+        "confusion_action": confusion_matrix(
             ya_true, ya_pred, labels=list(range(len(ACTION_CLASSES)))
         ).tolist(),
-        "confusion_severity":  confusion_matrix(
+        "confusion_severity": confusion_matrix(
             ys_true, ys_pred, labels=list(range(len(SEVERITY_CLASSES)))
         ).tolist(),
     }
@@ -165,6 +165,7 @@ def compute_metrics(y_true_action, y_pred_action,
 # ---------------------------------------------------------------------------
 # Single-strategy evaluation
 # ---------------------------------------------------------------------------
+
 
 def evaluate_strategy(
     classifier: VLMFoulClassifier,
@@ -175,7 +176,7 @@ def evaluate_strategy(
 ) -> dict:
     """Run evaluation for a single strategy."""
 
-    y_true_action, y_pred_action   = [], []
+    y_true_action, y_pred_action = [], []
     y_true_severity, y_pred_severity = [], []
     predictions = {}
 
@@ -193,7 +194,9 @@ def evaluate_strategy(
             for clip_key in sample["clips"][:4]:  # max 4 views
                 clip_name = clip_key.replace(".mp4", "")
                 frames = extract_keyframes(
-                    hdf5, action_key, clip_name,
+                    hdf5,
+                    action_key,
+                    clip_name,
                     n_frames=frames_per_view,
                 )
                 if frames:
@@ -223,16 +226,18 @@ def evaluate_strategy(
             y_pred_severity.append(severity_idx)
 
             predictions[action_id] = {
-                "true_action":   sample["action"],
-                "pred_action":   action_idx,
+                "true_action": sample["action"],
+                "pred_action": action_idx,
                 "true_severity": sample["severity"],
                 "pred_severity": severity_idx,
-                "raw_response":  raw,
+                "raw_response": raw,
             }
 
     metrics = compute_metrics(
-        y_true_action, y_pred_action,
-        y_true_severity, y_pred_severity,
+        y_true_action,
+        y_pred_action,
+        y_true_severity,
+        y_pred_severity,
     )
     metrics["predictions"] = predictions
     return metrics
@@ -241,6 +246,7 @@ def evaluate_strategy(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main(args):
     output_dir = Path(args.output_dir)
@@ -294,16 +300,20 @@ def main(args):
     print(f"{'Strategy':<20} {'Parse%':>7} {'Act BA':>8} {'Sev BA':>8} {'LB Val':>8}")
     print("-" * 55)
     for s, m in all_results.items():
-        print(f"{s:<20} {m.get('parse_rate',0):>7.1f} "
-              f"{m.get('balanced_acc_action',0):>8.2f} "
-              f"{m.get('balanced_acc_severity',0):>8.2f} "
-              f"{m.get('leaderboard_value',0):>8.4f}")
+        print(
+            f"{s:<20} {m.get('parse_rate',0):>7.1f} "
+            f"{m.get('balanced_acc_action',0):>8.2f} "
+            f"{m.get('balanced_acc_severity',0):>8.2f} "
+            f"{m.get('leaderboard_value',0):>8.4f}"
+        )
 
     # Save full results
     summary_path = output_dir / "all_results.json"
     # Remove predictions from summary to keep it readable
-    summary = {s: {k: v for k, v in m.items() if k != "predictions"}
-               for s, m in all_results.items()}
+    summary = {
+        s: {k: v for k, v in m.items() if k != "predictions"}
+        for s, m in all_results.items()
+    }
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"\nResults saved to {output_dir}/")
@@ -311,17 +321,24 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--hdf5_path",      required=True)
-    parser.add_argument("--annotations",    required=True)
-    parser.add_argument("--backend",        default="qwen",
-                        choices=["qwen", "internvl", "gpt4o"])
-    parser.add_argument("--strategies",     nargs="+",
-                        default=["zero_shot", "rule_grounded",
-                                 "chain_of_thought", "few_shot"])
-    parser.add_argument("--law12_pdf",      default=None)
+    parser.add_argument("--hdf5_path", required=True)
+    parser.add_argument("--annotations", required=True)
+    parser.add_argument(
+        "--backend", default="qwen", choices=["qwen", "internvl", "gpt4o"]
+    )
+    parser.add_argument(
+        "--strategies",
+        nargs="+",
+        default=["zero_shot", "rule_grounded", "chain_of_thought", "few_shot"],
+    )
+    parser.add_argument("--law12_pdf", default=None)
     parser.add_argument("--frames_per_view", type=int, default=4)
-    parser.add_argument("--output_dir",     default="vlm_results")
-    parser.add_argument("--max_samples",    type=int, default=None,
-                        help="Limit samples for quick testing (None = all)")
+    parser.add_argument("--output_dir", default="vlm_results")
+    parser.add_argument(
+        "--max_samples",
+        type=int,
+        default=None,
+        help="Limit samples for quick testing (None = all)",
+    )
     args = parser.parse_args()
     main(args)
