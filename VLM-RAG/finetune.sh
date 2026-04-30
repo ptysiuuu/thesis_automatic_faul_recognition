@@ -19,7 +19,7 @@ mkdir -p $HF_HOME
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate /net/tscratch/people/plgaszos/conda_envs/vlm
-cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion
+cd /net/tscratch/people/plgaszos/sn-mvfoul/VLM-RAG
 
 pip install peft trl qwen-vl-utils --quiet
 
