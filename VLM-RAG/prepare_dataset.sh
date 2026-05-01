@@ -23,7 +23,7 @@ python prepare_vlm_dataset.py \
     --hdf5_root       /net/tscratch/people/plgaszos/SoccerNet_HDF5 \
     --data_root       /net/tscratch/people/plgaszos/SoccerNet_Data \
     --output_dir      /net/tscratch/people/plgaszos/vlm_dataset \
-    --frames_per_view 4 \
+    --frames_per_view 2 \
     --strategy        rule_grounded \
     --law12_pdf       /net/tscratch/people/plgaszos/SoccerNet_Data/law12.pdf
 
