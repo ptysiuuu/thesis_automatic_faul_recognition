@@ -238,19 +238,19 @@ class FoulVLMTrainer(Trainer):
             # To zapobiega tworzeniu tensora wielkości 18GB, teraz to zajmie kilka megabajtów.
             valid_logits = model.lm_head(valid_hidden)
 
-			# 6. Liczymy cross entropy
-			valid_labels = shift_labels[valid_mask]
-			loss = torch.nn.functional.cross_entropy(
-				valid_logits,
-				valid_labels,
-				reduction="mean"
-			)
+            # 6. Liczymy cross entropy
+            valid_labels = shift_labels[valid_mask]
+            loss = torch.nn.functional.cross_entropy(
+                valid_logits,
+                valid_labels,
+                reduction="mean"
+            )
 
-		if return_outputs:
-			# Podajemy ucięte logity, żeby obejść błędy HF Trainera podczas ewaluacji
-			return loss, {"logits": valid_logits}
+        if return_outputs:
+            # Podajemy ucięte logity, żeby obejść błędy HF Trainera podczas ewaluacji
+            return loss, {"logits": valid_logits}
 
-		return loss
+        return loss
 
 
 # ---------------------------------------------------------------------------
