@@ -211,44 +211,43 @@ class FoulVLMTrainer(Trainer):
     # In FoulVLMTrainer, replace the compute_loss method with:
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        # 1. Usuwamy etykiety, co ZAPOBIEGA OOM wewnątrz modelu
         labels = inputs.pop("labels", None)
 
-        # 1. BAZOWY FORWARD PASS (BEZ LM_HEAD)
-        # Wywołujemy sam backbone modelu (w architekturze Qwen2 to model.model)
-        # Zwraca nam to same wektory cech [B, Seq_len, Hidden_size] np. [1, 3000, 3584]
-        outputs = model.model(**inputs)
-        hidden_states = outputs[0]
+        # 2. Puszczamy pełny forward pass (bez etykiet)
+        # To zwróci obiekt, w którym są już wyliczone logity.
+        outputs = model(**inputs)
 
-        # 2. Przesunięcie o 1 (standard w Causal LM)
-        shift_hidden = hidden_states[..., :-1, :].contiguous()
+        # Wyciągamy logity bezpośrednio z obiektu (kształt: [B, Seq, 152064])
+        # Zajmuje to "zaledwie" ~870MB, co jest w pełni akceptowalne.
+        logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+
+        # 3. Przesunięcie do autoregresji (przewidujemy ZAWSZE następny token)
+        shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
 
-        # 3. Maska dla tokenów odpowiedzi (ignorujemy -100)
-        valid_mask = (shift_labels != -100)
+        # 4. Ustalamy, gdzie są tokeny, których chcemy uczyć
+        # (ignorujemy prompt i padding, oznaczony jako -100)
+        valid_mask = shift_labels != -100
 
         if valid_mask.sum() == 0:
-            loss = torch.tensor(0.0, device=hidden_states.device, dtype=hidden_states.dtype, requires_grad=True)
-            valid_logits = None
+            loss = torch.tensor(
+                0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
+            )
         else:
-            # 4. PRAWDZIWY FIX: Wycinamy TYLKO te hidden states, które nas interesują (~50 tokenów)
-            valid_hidden = shift_hidden[valid_mask]  # Kształt: [N_valid, Hidden_size]
-
-            # 5. Rzutujemy na logity TYLKO użyteczne tokeny!
-            # [N_valid, Hidden_size] -> [N_valid, Vocab_size]
-            # To zapobiega tworzeniu tensora wielkości 18GB, teraz to zajmie kilka megabajtów.
-            valid_logits = model.lm_head(valid_hidden)
-
-            # 6. Liczymy cross entropy
+            # 5. Wycinamy TYLKO gotowe logity dla tych tokenów (~40 sztuk)
+            # Kształt spada drastycznie z [Seq, 152064] na [40, 152064]
+            valid_logits = shift_logits[valid_mask]
             valid_labels = shift_labels[valid_mask]
+
+            # 6. Liczymy stratę na mikroskopijnym wycinku.
+            # Zamiast odpalać Softmax na setkach milionów elementów, robimy to tylko dla ułamka.
             loss = torch.nn.functional.cross_entropy(
-                valid_logits,
-                valid_labels,
-                reduction="mean"
+                valid_logits, valid_labels, reduction="mean"
             )
 
         if return_outputs:
-            # Podajemy ucięte logity, żeby obejść błędy HF Trainera podczas ewaluacji
-            return loss, {"logits": valid_logits}
+            return loss, outputs
 
         return loss
 
