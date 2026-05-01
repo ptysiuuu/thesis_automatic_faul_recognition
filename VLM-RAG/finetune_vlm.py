@@ -211,28 +211,31 @@ class FoulVLMTrainer(Trainer):
     # In FoulVLMTrainer, replace the compute_loss method with:
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        # Pop labels so the model does NOT compute loss internally
-        # This avoids the logits.float() OOM inside the model's loss_function
-        labels = inputs.pop("labels")
+        labels = inputs.pop("labels", None)
+
+        # Force the model to not compute loss by setting labels=None explicitly
+        inputs["labels"] = None
 
         outputs = model(**inputs)
-        logits = outputs.logits  # [B, seq_len, vocab] in bf16
+        logits = outputs.logits  # bf16, no float32 cast happened
 
-        # Compute loss in bf16 — shift logits and labels for causal LM
+        # Remove the None labels
+        del inputs["labels"]
+
+        # Compute loss manually in bf16
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
 
-        # Flatten and compute cross-entropy without casting to float32
         loss = torch.nn.functional.cross_entropy(
             shift_logits.view(-1, shift_logits.size(-1)),
             shift_labels.view(-1),
             ignore_index=-100,
         )
 
-        # Put labels back for any downstream use
-        inputs["labels"] = labels
-
-        return (loss, outputs) if return_outputs else loss
+        if return_outputs:
+            outputs.loss = loss
+            return loss, outputs
+        return loss
 
 
 # ---------------------------------------------------------------------------
