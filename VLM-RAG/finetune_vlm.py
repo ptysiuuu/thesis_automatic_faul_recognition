@@ -211,43 +211,50 @@ class FoulVLMTrainer(Trainer):
     # In FoulVLMTrainer, replace the compute_loss method with:
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        # 1. Usuwamy etykiety, co ZAPOBIEGA OOM wewnątrz modelu
         labels = inputs.pop("labels", None)
 
-        # 2. Puszczamy pełny forward pass (bez etykiet)
-        # To zwróci obiekt, w którym są już wyliczone logity.
-        outputs = model(**inputs)
+        # 1. PRAWIDŁOWE DOKOPANIE SIĘ DO BACKBONE'A PRZEZ LORA (PEFT)
+        # model                       -> PeftModel
+        # model.base_model.model      -> Qwen2VLForConditionalGeneration
+        # model.base_model.model.model -> Qwen2VLModel (czysty Transformer bez słownika!)
+        transformer = model.base_model.model.model
+        lm_head = model.base_model.model.lm_head
 
-        # Wyciągamy logity bezpośrednio z obiektu (kształt: [B, Seq, 152064])
-        # Zajmuje to "zaledwie" ~870MB, co jest w pełni akceptowalne.
-        logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+        # 2. Forward pass TYLKO przez rdzeń (zwraca wektory 3584, zero logitów)
+        outputs = transformer(**inputs)
+        hidden_states = outputs[0]  # Kształt: [Batch, Seq_len, 3584]
 
-        # 3. Przesunięcie do autoregresji (przewidujemy ZAWSZE następny token)
-        shift_logits = logits[..., :-1, :].contiguous()
+        # 3. Przesunięcie o 1 (Causal LM)
+        shift_hidden = hidden_states[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
 
-        # 4. Ustalamy, gdzie są tokeny, których chcemy uczyć
-        # (ignorujemy prompt i padding, oznaczony jako -100)
+        # 4. Maska (tylko tokeny odpowiedzi asystenta)
         valid_mask = shift_labels != -100
 
         if valid_mask.sum() == 0:
             loss = torch.tensor(
-                0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
+                0.0,
+                device=hidden_states.device,
+                dtype=hidden_states.dtype,
+                requires_grad=True,
             )
+            valid_logits = None
         else:
-            # 5. Wycinamy TYLKO gotowe logity dla tych tokenów (~40 sztuk)
-            # Kształt spada drastycznie z [Seq, 152064] na [40, 152064]
-            valid_logits = shift_logits[valid_mask]
+            # 5. Zmniejszamy tensor ZANIM wejdzie do lm_head
+            valid_hidden = shift_hidden[valid_mask]  # Kształt spada np. do [40, 3584]
+
+            # 6. Rzutujemy na 152064 klas TYLKO te 40 tokenów!
+            # To zajmuje kilka megabajtów zamiast 18 Gigabajtów.
+            valid_logits = lm_head(valid_hidden)  # Kształt: [40, 152064]
+
             valid_labels = shift_labels[valid_mask]
 
-            # 6. Liczymy stratę na mikroskopijnym wycinku.
-            # Zamiast odpalać Softmax na setkach milionów elementów, robimy to tylko dla ułamka.
             loss = torch.nn.functional.cross_entropy(
                 valid_logits, valid_labels, reduction="mean"
             )
 
         if return_outputs:
-            return loss, outputs
+            return loss, {"logits": valid_logits}
 
         return loss
 
