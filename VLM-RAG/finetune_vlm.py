@@ -213,29 +213,44 @@ class FoulVLMTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         labels = inputs.pop("labels", None)
 
-        # Force the model to not compute loss by setting labels=None explicitly
-        inputs["labels"] = None
+        # 1. BAZOWY FORWARD PASS (BEZ LM_HEAD)
+        # Wywołujemy sam backbone modelu (w architekturze Qwen2 to model.model)
+        # Zwraca nam to same wektory cech [B, Seq_len, Hidden_size] np. [1, 3000, 3584]
+        outputs = model.model(**inputs)
+        hidden_states = outputs[0]
 
-        outputs = model(**inputs)
-        logits = outputs.logits  # bf16, no float32 cast happened
-
-        # Remove the None labels
-        del inputs["labels"]
-
-        # Compute loss manually in bf16
-        shift_logits = logits[..., :-1, :].contiguous()
+        # 2. Przesunięcie o 1 (standard w Causal LM)
+        shift_hidden = hidden_states[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
 
-        loss = torch.nn.functional.cross_entropy(
-            shift_logits.view(-1, shift_logits.size(-1)),
-            shift_labels.view(-1),
-            ignore_index=-100,
-        )
+        # 3. Maska dla tokenów odpowiedzi (ignorujemy -100)
+        valid_mask = (shift_labels != -100)
 
-        if return_outputs:
-            outputs.loss = loss
-            return loss, outputs
-        return loss
+        if valid_mask.sum() == 0:
+            loss = torch.tensor(0.0, device=hidden_states.device, dtype=hidden_states.dtype, requires_grad=True)
+            valid_logits = None
+        else:
+            # 4. PRAWDZIWY FIX: Wycinamy TYLKO te hidden states, które nas interesują (~50 tokenów)
+            valid_hidden = shift_hidden[valid_mask]  # Kształt: [N_valid, Hidden_size]
+
+            # 5. Rzutujemy na logity TYLKO użyteczne tokeny!
+            # [N_valid, Hidden_size] -> [N_valid, Vocab_size]
+            # To zapobiega tworzeniu tensora wielkości 18GB, teraz to zajmie kilka megabajtów.
+            valid_logits = model.lm_head(valid_hidden)
+
+			# 6. Liczymy cross entropy
+			valid_labels = shift_labels[valid_mask]
+			loss = torch.nn.functional.cross_entropy(
+				valid_logits,
+				valid_labels,
+				reduction="mean"
+			)
+
+		if return_outputs:
+			# Podajemy ucięte logity, żeby obejść błędy HF Trainera podczas ewaluacji
+			return loss, {"logits": valid_logits}
+
+		return loss
 
 
 # ---------------------------------------------------------------------------
