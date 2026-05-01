@@ -32,14 +32,19 @@ from io import BytesIO
 import torch
 from PIL import Image
 
-
 # ---------------------------------------------------------------------------
 # Label mappings (must match your dataset)
 # ---------------------------------------------------------------------------
 
 ACTION_CLASSES = [
-    "Tackling", "Standing tackling", "High leg", "Holding",
-    "Pushing", "Elbowing", "Challenge", "Dive",
+    "Tackling",
+    "Standing tackling",
+    "High leg",
+    "Holding",
+    "Pushing",
+    "Elbowing",
+    "Challenge",
+    "Dive",
 ]
 SEVERITY_CLASSES = ["No offence", "No card", "Yellow card", "Red card"]
 
@@ -50,6 +55,7 @@ SEVERITY_TO_IDX = {s: i for i, s in enumerate(SEVERITY_CLASSES)}
 # ---------------------------------------------------------------------------
 # Frame extraction
 # ---------------------------------------------------------------------------
+
 
 def extract_keyframes(
     hdf5_file,
@@ -70,6 +76,7 @@ def extract_keyframes(
     n_frames   : int  keyframes to extract per clip
     """
     import h5py
+
     key = f"{action_key}/{clip_key}"
     if key not in hdf5_file:
         return []
@@ -135,7 +142,7 @@ SEVERITY (choose exactly one):
 
 Apply the rules strictly:
 - EXCESSIVE FORCE or endangering safety → RED CARD
-- RECKLESS (disregard for opponent) → YELLOW CARD  
+- RECKLESS (disregard for opponent) → YELLOW CARD
 - CARELESS (lack of attention) → No card but still a foul
 - SIMULATION/DIVING → No offence, Yellow card
 
@@ -170,24 +177,23 @@ Respond with ONLY this JSON:
 FEW_SHOT_EXAMPLES = """
 EXAMPLE 1:
 Incident: Player lunges from behind with foot raised high, making full contact with opponent's leg.
-Classification: {{"action": "Tackling", "severity": "Red card",
-  "reasoning": "Tackle from behind with excessive force endangers opponent's safety — serious foul play."}}
+Analysis: 1. The player challenges from behind. 2. The foot is raised high, showing a disregard for safety. 3. There is full contact using excessive force. 4. This endangers the safety of the opponent.
+Classification: {{"action": "Tackling", "severity": "Red card"}}
 
 EXAMPLE 2:
 Incident: Player extends elbow into opponent's face while not challenging for the ball.
-Classification: {{"action": "Elbowing", "severity": "Red card",
-  "reasoning": "Elbowing is violent conduct regardless of ball proximity."}}
+Analysis: 1. The player uses an elbow. 2. Contact is made directly to the opponent's face. 3. The ball is not being challenged. 4. This constitutes violent conduct regardless of ball proximity.
+Classification: {{"action": "Elbowing", "severity": "Red card"}}
 
 EXAMPLE 3:
 Incident: Player falls dramatically after minimal contact, exaggerating the effect.
-Classification: {{"action": "Dive", "severity": "No offence",
-  "reasoning": "Simulation — player feigned injury to deceive referee, yellow card for unsporting behaviour."}}
+Analysis: 1. The physical contact is minimal and not enough to cause a fall. 2. The player throws their body to exaggerate the effect. 3. The intent is clearly simulation to deceive the referee.
+Classification: {{"action": "Dive", "severity": "No offence"}}
 
 EXAMPLE 4:
 Incident: Player grabs opponent's shirt to slow them down during a counterattack.
-Classification: {{"action": "Holding", "severity": "Yellow card",
-  "reasoning": "Reckless holding — disregards opponent's progress, caution warranted."}}
-
+Analysis: 1. The player uses their hands to grab the shirt. 2. This tactical foul stops a promising attack. 3. It is a reckless disregard for the opponent's progress.
+Classification: {{"action": "Holding", "severity": "Yellow card"}}
 """
 
 FEW_SHOT_TEMPLATE = """You are analyzing a potential football foul from {n_views} camera angles.
@@ -195,10 +201,12 @@ View 0 is the live broadcast camera. Views 1+ are replay cameras.
 
 {law12_context}
 
-Here are some examples of correctly classified incidents:
+Here are some examples of correctly analyzed and classified incidents:
 {examples}
 
-Now classify the incident shown in the video frames:
+Now classify the incident shown in the video frames.
+First, provide a step-by-step Analysis of the foul (contact, force, intent).
+Then, provide the final Classification.
 
 ACTION TYPE (choose exactly one):
 {action_list}
@@ -206,8 +214,9 @@ ACTION TYPE (choose exactly one):
 SEVERITY (choose exactly one):
 {severity_list}
 
-Respond with ONLY this JSON:
-{{"action": "<action type>", "severity": "<severity>", "reasoning": "<one sentence>"}}"""
+Respond in EXACTLY this format:
+Analysis: <your step-by-step reasoning>
+Classification: {{"action": "<action type>", "severity": "<severity>"}}"""
 
 
 def build_prompt(
@@ -237,6 +246,7 @@ def build_prompt(
 # Response parser
 # ---------------------------------------------------------------------------
 
+
 def parse_response(response_text: str) -> Tuple[int, int]:
     """
     Parse VLM JSON response into (action_idx, severity_idx).
@@ -246,7 +256,7 @@ def parse_response(response_text: str) -> Tuple[int, int]:
     text = re.sub(r"```json\s*|\s*```", "", response_text).strip()
 
     # Find JSON object
-    match = re.search(r'\{.*\}', text, re.DOTALL)
+    match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         return -1, -1
 
@@ -260,7 +270,7 @@ def parse_response(response_text: str) -> Tuple[int, int]:
         except Exception:
             return -1, -1
 
-    action_str   = data.get("action", "")
+    action_str = data.get("action", "")
     severity_str = data.get("severity", "")
 
     # Fuzzy match action
@@ -284,6 +294,7 @@ def parse_response(response_text: str) -> Tuple[int, int]:
 # Model backends
 # ---------------------------------------------------------------------------
 
+
 class QwenVLBackend:
     """
     Qwen2.5-VL-7B-Instruct backend.
@@ -292,6 +303,7 @@ class QwenVLBackend:
 
     def __init__(self, model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct"):
         from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+
         print(f"[QwenVL] Loading {model_name}...")
         self.processor = AutoProcessor.from_pretrained(
             model_name, trust_remote_code=True
@@ -327,7 +339,7 @@ class QwenVLBackend:
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": content},
+            {"role": "user", "content": content},
         ]
 
         text_input = self.processor.apply_chat_template(
@@ -352,10 +364,8 @@ class QwenVLBackend:
             )
 
         # Decode only new tokens
-        generated = output_ids[:, inputs["input_ids"].shape[1]:]
-        return self.processor.batch_decode(
-            generated, skip_special_tokens=True
-        )[0]
+        generated = output_ids[:, inputs["input_ids"].shape[1] :]
+        return self.processor.batch_decode(generated, skip_special_tokens=True)[0]
 
 
 class InternVLBackend:
@@ -370,12 +380,16 @@ class InternVLBackend:
         from torchvision.transforms.functional import InterpolationMode
 
         print(f"[InternVL] Loading {model_name}...")
-        self.model = AutoModel.from_pretrained(
-            model_name,
-            torch_dtype=torch.bfloat16,
-            low_cpu_mem_usage=True,
-            trust_remote_code=True,
-        ).cuda().eval()
+        self.model = (
+            AutoModel.from_pretrained(
+                model_name,
+                torch_dtype=torch.bfloat16,
+                low_cpu_mem_usage=True,
+                trust_remote_code=True,
+            )
+            .cuda()
+            .eval()
+        )
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name, trust_remote_code=True
         )
@@ -385,14 +399,17 @@ class InternVLBackend:
     def _build_transform(self, input_size=448):
         import torchvision.transforms as T
         from torchvision.transforms.functional import InterpolationMode
-        return T.Compose([
-            T.Lambda(lambda img: img.convert("RGB")),
-            T.Resize((input_size, input_size),
-                     interpolation=InterpolationMode.BICUBIC),
-            T.ToTensor(),
-            T.Normalize(mean=[0.485, 0.456, 0.406],
-                        std=[0.229, 0.224, 0.225]),
-        ])
+
+        return T.Compose(
+            [
+                T.Lambda(lambda img: img.convert("RGB")),
+                T.Resize(
+                    (input_size, input_size), interpolation=InterpolationMode.BICUBIC
+                ),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ]
+        )
 
     def classify(
         self,
@@ -409,9 +426,11 @@ class InternVLBackend:
                 all_frames.append(frame)
                 image_tags += "<image> "
 
-        pixel_values = torch.stack([
-            self.transform(f) for f in all_frames
-        ]).to(torch.bfloat16).cuda()
+        pixel_values = (
+            torch.stack([self.transform(f) for f in all_frames])
+            .to(torch.bfloat16)
+            .cuda()
+        )
 
         full_prompt = f"{SYSTEM_PROMPT}\n\n{image_tags}\n\n{prompt}"
         generation_config = dict(max_new_tokens=512, do_sample=False)
@@ -434,6 +453,7 @@ class GPT4oBackend:
 
     def __init__(self, model: str = "gpt-4o"):
         import openai
+
         self.client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
         self.model = model
         print(f"[GPT4o] Using model: {model}")
@@ -450,11 +470,15 @@ class GPT4oBackend:
             content.append({"type": "text", "text": f"\n[{view_label}]"})
             for frame in frames:
                 b64 = pil_to_base64(frame, fmt="JPEG")
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{b64}",
-                                  "detail": "high"},
-                })
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{b64}",
+                            "detail": "high",
+                        },
+                    }
+                )
 
         content.append({"type": "text", "text": f"\n\n{prompt}"})
 
@@ -470,6 +494,7 @@ class GPT4oBackend:
 # ---------------------------------------------------------------------------
 # Main classifier
 # ---------------------------------------------------------------------------
+
 
 class VLMFoulClassifier:
     """
@@ -499,7 +524,8 @@ class VLMFoulClassifier:
 
         # Initialize RAG
         from law12_rag import Law12RAG
-        use_emb = (backend != "gpt4o")  # skip heavy embedding model for API backends
+
+        use_emb = backend != "gpt4o"  # skip heavy embedding model for API backends
         self.rag = Law12RAG(
             pdf_path=law12_pdf,
             top_k=3,
