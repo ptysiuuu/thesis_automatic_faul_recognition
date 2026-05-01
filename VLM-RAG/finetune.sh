@@ -27,7 +27,7 @@ python finetune_vlm.py \
     --dataset_dir  /net/tscratch/people/plgaszos/vlm_dataset \
     --output_dir   /net/tscratch/people/plgaszos/vlm_finetuned \
     --model_name   Qwen/Qwen2.5-VL-7B-Instruct \
-    --lora_rank    16 \
+    --lora_rank    8 \
     --max_epochs   5 \
     --batch_size   1 \
     --grad_accum   8 \

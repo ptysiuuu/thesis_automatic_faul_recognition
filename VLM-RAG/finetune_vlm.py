@@ -208,6 +208,11 @@ class FoulVLMTrainer(Trainer):
             num_workers=4,
         )
 
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        outputs = model(**inputs)
+        loss = outputs.loss
+        return (loss, outputs) if return_outputs else loss
+
 
 # ---------------------------------------------------------------------------
 # Main finetuning function
@@ -322,6 +327,7 @@ def main(args):
         report_to="none",
         gradient_checkpointing=True,  # saves memory for 7B model
         gradient_checkpointing_kwargs={"use_reentrant": False},
+        bf16_full_eval=True,
     )
 
     trainer = FoulVLMTrainer(
