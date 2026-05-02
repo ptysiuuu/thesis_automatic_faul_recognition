@@ -29,31 +29,37 @@ import torch
 import torch.nn.functional as F
 from torchvision.models.video import mvit_v2_s, MViT_V2_S_Weights
 
-
 # ---------------------------------------------------------------------------
 # Label mappings — must match evaluate_vlm.py
 # ---------------------------------------------------------------------------
 
 ACTION_CLASSES = [
-    "Tackling", "Standing tackling", "High leg", "Holding",
-    "Pushing", "Elbowing", "Challenge", "Dive",
+    "Tackling",
+    "Standing tackling",
+    "High leg",
+    "Holding",
+    "Pushing",
+    "Elbowing",
+    "Challenge",
+    "Dive",
 ]
 
 # Raw severity string → human-readable card label
 SEVERITY_MAP = {
-    "":    "No offence",
+    "": "No offence",
     "1.0": "No card",
     "3.0": "Yellow card",
     "5.0": "Red card",
 }
 
-SKIP_ACTIONS   = {"Dont know", ""}
-SKIP_SEVERITIES = {"2.0", "4.0"}   # ambiguous borderline labels
+SKIP_ACTIONS = {"Dont know", ""}
+SKIP_SEVERITIES = {"2.0", "4.0"}  # ambiguous borderline labels
 
 
 # ---------------------------------------------------------------------------
 # MViT feature extractor
 # ---------------------------------------------------------------------------
+
 
 class MViTFeatureExtractor:
     """
@@ -79,33 +85,41 @@ class MViTFeatureExtractor:
     @torch.no_grad()
     def extract(self, frames_np: np.ndarray) -> np.ndarray:
         """
-        frames_np : [T, H, W, C] uint8  (raw HDF5 tensor)
+        frames_np : [T, H, W, C] uint8
         Returns   : [768] float32
         """
-        # [T, H, W, C] → [C, T, H, W]
-        video = torch.from_numpy(frames_np).permute(3, 0, 1, 2).float()
+        # [T, H, W, C] uint8 → [T, H, W, C] float → [1, C, T, H, W] for interpolate
+        video = torch.from_numpy(frames_np.astype(np.float32))  # [T, H, W, C]
+        video = video.permute(3, 0, 1, 2)  # [C, T, H, W]
+        video = video.unsqueeze(0)  # [1, C, T, H, W]
 
-        # Resample to TARGET_FRAMES along time axis
-        T = video.shape[1]
+        # Resample time dimension to 16 frames
+        T = video.shape[2]
         if T != self.TARGET_FRAMES:
             video = F.interpolate(
-                video.unsqueeze(0),   # [1, C, T, H, W]
-                size=(self.TARGET_FRAMES, video.shape[2], video.shape[3]),
+                video,
+                size=(self.TARGET_FRAMES, video.shape[3], video.shape[4]),
                 mode="trilinear",
                 align_corners=False,
-            ).squeeze(0)             # [C, 16, H, W]
+            )  # [1, C, 16, H, W]
 
-        # MViT transforms expect uint8 [C, T, H, W]
-        video_uint8 = video.clamp(0, 255).to(torch.uint8)
-        input_tensor = self.transform(video_uint8).unsqueeze(0).to(self.device)
+        # Convert back to uint8 [C, T, H, W] for MViT transforms
+        video_uint8 = video.squeeze(0).clamp(0, 255).to(torch.uint8)  # [C, 16, H, W]
 
-        feat = self.model(input_tensor)  # [1, 768]
-        return feat.cpu().numpy().astype(np.float32).flatten()
+        # MViT transform expects [C, T, H, W] uint8
+        input_tensor = (
+            self.transform(video_uint8).unsqueeze(0).to(self.device)
+        )  # [1, C, 16, H, W]
+
+        feat = self.model(input_tensor).cpu().numpy().astype(np.float32).flatten()
+        norm = np.linalg.norm(feat)
+        return feat / (norm + 1e-8)
 
 
 # ---------------------------------------------------------------------------
 # Main index builder
 # ---------------------------------------------------------------------------
+
 
 def build_index(args):
     import h5py
@@ -114,24 +128,26 @@ def build_index(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     index_path = output_dir / "train_mvit_features.index"
-    meta_path  = output_dir / "train_mvit_metadata.json"
+    meta_path = output_dir / "train_mvit_metadata.json"
 
-    extractor = MViTFeatureExtractor(device="cuda" if torch.cuda.is_available() else "cpu")
+    extractor = MViTFeatureExtractor(
+        device="cuda" if torch.cuda.is_available() else "cpu"
+    )
 
     with open(args.annotations) as f:
         annotations = json.load(f)["Actions"]
 
     # FAISS flat L2 index (exact search, fast enough for ~2300 vectors)
-    index    = faiss.IndexFlatL2(MViTFeatureExtractor.FEAT_DIM)
+    index = faiss.IndexFlatL2(MViTFeatureExtractor.FEAT_DIM)
     metadata = {}
     idx_counter = 0
-    n_skipped   = 0
+    n_skipped = 0
 
     with h5py.File(args.hdf5_path, "r", swmr=True) as hdf5:
         for action_id, action_data in tqdm(annotations.items(), desc="Building FAISS"):
-            action_class   = action_data.get("Action class", "")
-            offence_class  = action_data.get("Offence", "")
-            severity_str   = action_data.get("Severity", "")
+            action_class = action_data.get("Action class", "")
+            offence_class = action_data.get("Offence", "")
+            severity_str = action_data.get("Severity", "")
 
             # Skip ambiguous / unknown labels
             if action_class in SKIP_ACTIONS:
@@ -159,19 +175,19 @@ def build_index(args):
                 continue
 
             clip_name = clips[0]["Url"].split("/")[-1].replace(".mp4", "")
-            hdf5_key  = f"action_{action_id}/{clip_name}"
+            hdf5_key = f"action_{action_id}/{clip_name}"
 
             if hdf5_key not in hdf5:
                 n_skipped += 1
                 continue
 
-            frames_np = hdf5[hdf5_key][:]   # [T, H, W, C] uint8
+            frames_np = hdf5[hdf5_key][:]  # [T, H, W, C] uint8
             if len(frames_np) < 4:
                 n_skipped += 1
                 continue
 
             try:
-                feat = extractor.extract(frames_np)   # [768]
+                feat = extractor.extract(frames_np)  # [768]
             except Exception as e:
                 print(f"  Error extracting {hdf5_key}: {e}")
                 n_skipped += 1
@@ -185,8 +201,8 @@ def build_index(args):
             index.add(feat.reshape(1, -1))
 
             metadata[str(idx_counter)] = {
-                "action":    action_class,
-                "severity":  severity_label,
+                "action": action_class,
+                "severity": severity_label,
                 "action_id": action_id,
             }
             idx_counter += 1
@@ -202,8 +218,8 @@ def build_index(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--hdf5_path",   required=True)
+    parser.add_argument("--hdf5_path", required=True)
     parser.add_argument("--annotations", required=True)
-    parser.add_argument("--output_dir",  required=True)
+    parser.add_argument("--output_dir", required=True)
     args = parser.parse_args()
     build_index(args)

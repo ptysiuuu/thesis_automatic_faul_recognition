@@ -32,17 +32,22 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-
 # ---------------------------------------------------------------------------
 # Label mappings
 # ---------------------------------------------------------------------------
 
 ACTION_CLASSES = [
-    "Tackling", "Standing tackling", "High leg", "Holding",
-    "Pushing", "Elbowing", "Challenge", "Dive",
+    "Tackling",
+    "Standing tackling",
+    "High leg",
+    "Holding",
+    "Pushing",
+    "Elbowing",
+    "Challenge",
+    "Dive",
 ]
 SEVERITY_CLASSES = ["No offence", "No card", "Yellow card", "Red card"]
-ACTION_TO_IDX  = {a: i for i, a in enumerate(ACTION_CLASSES)}
+ACTION_TO_IDX = {a: i for i, a in enumerate(ACTION_CLASSES)}
 SEVERITY_TO_IDX = {s: i for i, s in enumerate(SEVERITY_CLASSES)}
 
 
@@ -50,8 +55,10 @@ SEVERITY_TO_IDX = {s: i for i, s in enumerate(SEVERITY_CLASSES)}
 # Frame utilities
 # ---------------------------------------------------------------------------
 
-def extract_keyframes(hdf5_file, action_key: str, clip_key: str,
-                      n_frames: int = 4) -> List[Image.Image]:
+
+def extract_keyframes(
+    hdf5_file, action_key: str, clip_key: str, n_frames: int = 4
+) -> List[Image.Image]:
     key = f"{action_key}/{clip_key}"
     if key not in hdf5_file:
         return []
@@ -109,9 +116,11 @@ CARELESS TACKLE → free kick, no card.
 # Law 12 RAG
 # ---------------------------------------------------------------------------
 
+
 class Law12RAG:
-    def __init__(self, pdf_path: str = None, top_k: int = 3,
-                 use_embeddings: bool = True):
+    def __init__(
+        self, pdf_path: str = None, top_k: int = 3, use_embeddings: bool = True
+    ):
         self.top_k = top_k
         self.use_embeddings = use_embeddings
         self.chunks = []
@@ -128,6 +137,7 @@ class Law12RAG:
         if pdf_path and Path(pdf_path).exists():
             try:
                 import fitz
+
                 doc = fitz.open(pdf_path)
                 text = "".join(page.get_text() for page in doc)
                 doc.close()
@@ -143,10 +153,12 @@ class Law12RAG:
                         end = text.find(end_marker, start + 100)
                         if end > start:
                             text = text[start:end]
-                            print(f"[Law12RAG] Extracted Law 12 section ({len(text)} chars)")
+                            print(
+                                f"[Law12RAG] Extracted Law 12 section ({len(text)} chars)"
+                            )
                             break
                     else:
-                        text = text[start:start + 6000]
+                        text = text[start : start + 6000]
                         print(f"[Law12RAG] No end marker — using 6000 chars from start")
                 return text
             except Exception as e:
@@ -156,7 +168,7 @@ class Law12RAG:
         return LAW12_HARDCODED
 
     def _chunk(self, text: str, chunk_size: int):
-        raw = re.split(r'\n{2,}', text)
+        raw = re.split(r"\n{2,}", text)
         chunks, current = [], ""
         for part in raw:
             part = part.strip()
@@ -175,9 +187,11 @@ class Law12RAG:
     def _build_index(self):
         try:
             from sentence_transformers import SentenceTransformer
+
             self._model = SentenceTransformer("all-MiniLM-L6-v2")
-            emb = self._model.encode(self.chunks, convert_to_numpy=True,
-                                     show_progress_bar=False)
+            emb = self._model.encode(
+                self.chunks, convert_to_numpy=True, show_progress_bar=False
+            )
             norms = np.linalg.norm(emb, axis=1, keepdims=True)
             self.embeddings = emb / (norms + 1e-8)
             print("[Law12RAG] Embedding index built.")
@@ -190,14 +204,16 @@ class Law12RAG:
             q = self._model.encode([query], convert_to_numpy=True)
             q = q / (np.linalg.norm(q, axis=1, keepdims=True) + 1e-8)
             scores = (self.embeddings @ q.T).squeeze()
-            top_idx = np.argsort(scores)[::-1][:self.top_k]
+            top_idx = np.argsort(scores)[::-1][: self.top_k]
             passages = [self.chunks[i] for i in top_idx]
         else:
             qw = set(query.lower().split())
-            scored = sorted(self.chunks,
-                            key=lambda c: len(qw & set(c.lower().split())),
-                            reverse=True)
-            passages = scored[:self.top_k]
+            scored = sorted(
+                self.chunks,
+                key=lambda c: len(qw & set(c.lower().split())),
+                reverse=True,
+            )
+            passages = scored[: self.top_k]
 
         ctx = "=== Relevant FIFA Law 12 Rules ===\n\n"
         for i, p in enumerate(passages, 1):
@@ -206,15 +222,15 @@ class Law12RAG:
 
     def build_query(self, action_type: str) -> str:
         kw = {
-            "Tackling":          "tackle challenge from behind serious foul play red card",
+            "Tackling": "tackle challenge from behind serious foul play red card",
             "Standing tackling": "tackle standing challenge careless reckless yellow card",
-            "High leg":          "high leg raised foot dangerous head endangers safety",
-            "Holding":           "holding opponent arms shirt DOGSO",
-            "Pushing":           "pushing opponent excessive force reckless",
-            "Elbowing":          "elbow violent conduct arm opponent not playing ball",
-            "Challenge":         "challenge aerial jump opponent contact",
-            "Dive":              "diving simulation feigning injury yellow card",
-            "Dont know":         "foul misconduct direct free kick",
+            "High leg": "high leg raised foot dangerous head endangers safety",
+            "Holding": "holding opponent arms shirt DOGSO",
+            "Pushing": "pushing opponent excessive force reckless",
+            "Elbowing": "elbow violent conduct arm opponent not playing ball",
+            "Challenge": "challenge aerial jump opponent contact",
+            "Dive": "diving simulation feigning injury yellow card",
+            "Dont know": "foul misconduct direct free kick",
         }
         return kw.get(action_type, "foul misconduct")
 
@@ -223,6 +239,7 @@ class Law12RAG:
 # MViT feature extractor (for RAG-ICL retrieval)
 # ---------------------------------------------------------------------------
 
+
 class MViTRetriever:
     """
     Extracts MViT-v2-S features from a PIL frame list and queries FAISS.
@@ -230,10 +247,9 @@ class MViTRetriever:
     """
 
     TARGET_FRAMES = 16
-    FEAT_DIM      = 768
+    FEAT_DIM = 768
 
-    def __init__(self, index_path: str, meta_path: str,
-                 device: str = "cuda"):
+    def __init__(self, index_path: str, meta_path: str, device: str = "cuda"):
         import faiss
         from torchvision.models.video import mvit_v2_s, MViT_V2_S_Weights
 
@@ -257,34 +273,40 @@ class MViTRetriever:
     @torch.no_grad()
     def _extract_feature(self, pil_frames: List[Image.Image]) -> np.ndarray:
         """
-        pil_frames : list of PIL Images (from one view, any count)
-        Returns    : [768] float32 L2-normalized
+        frames_np : [T, H, W, C] uint8
+        Returns   : [768] float32
         """
-        # Stack PIL frames → [T, H, W, C] uint8
-        frames_np = np.stack([np.array(f.convert("RGB")) for f in pil_frames])
+        # Convert PIL frames list to numpy array [T, H, W, C]
+        frames_np = np.stack([np.array(p) for p in pil_frames])
 
-        # [T, H, W, C] → [C, T, H, W] float
-        video = torch.from_numpy(frames_np).permute(3, 0, 1, 2).float()
+        # [T, H, W, C] uint8 → [T, H, W, C] float → [1, C, T, H, W] for interpolate
+        video = torch.from_numpy(frames_np.astype(np.float32))  # [T, H, W, C]
+        video = video.permute(3, 0, 1, 2)  # [C, T, H, W]
+        video = video.unsqueeze(0)  # [1, C, T, H, W]
 
-        # Resample to TARGET_FRAMES
-        T = video.shape[1]
+        # Resample time dimension to 16 frames
+        T = video.shape[2]
         if T != self.TARGET_FRAMES:
             video = F.interpolate(
-                video.unsqueeze(0),
-                size=(self.TARGET_FRAMES, video.shape[2], video.shape[3]),
+                video,
+                size=(self.TARGET_FRAMES, video.shape[3], video.shape[4]),
                 mode="trilinear",
                 align_corners=False,
-            ).squeeze(0)
+            )  # [1, C, 16, H, W]
 
-        video_uint8 = video.clamp(0, 255).to(torch.uint8)
-        inp = self.transform(video_uint8).unsqueeze(0).to(self.device)
+        # Convert back to uint8 [C, T, H, W] for MViT transforms
+        video_uint8 = video.squeeze(0).clamp(0, 255).to(torch.uint8)  # [C, 16, H, W]
 
-        feat = self.model(inp).cpu().numpy().astype(np.float32).flatten()
+        # MViT transform expects [C, T, H, W] uint8
+        input_tensor = (
+            self.transform(video_uint8).unsqueeze(0).to(self.device)
+        )  # [1, C, 16, H, W]
+
+        feat = self.model(input_tensor).cpu().numpy().astype(np.float32).flatten()
         norm = np.linalg.norm(feat)
         return feat / (norm + 1e-8)
 
-    def retrieve(self, live_frames: List[Image.Image],
-                 k: int = 3) -> str:
+    def retrieve(self, live_frames: List[Image.Image], k: int = 3) -> str:
         """
         live_frames : PIL frames from the live (view 0) camera
         Returns     : formatted string of K precedents for prompt injection
@@ -294,15 +316,15 @@ class MViTRetriever:
 
         examples_str = ""
         for rank, idx in enumerate(indices[0], 1):
-            meta   = self.metadata.get(str(idx), {})
-            action = meta.get("action",   "Unknown")
-            sev    = meta.get("severity", "Unknown")
-            dist   = float(distances[0][rank - 1])
+            meta = self.metadata.get(str(idx), {})
+            action = meta.get("action", "Unknown")
+            sev = meta.get("severity", "Unknown")
+            dist = float(distances[0][rank - 1])
             examples_str += (
                 f"PRECEDENT {rank} "
                 f"(visual similarity distance={dist:.3f}):\n"
                 f"  Official referee decision: "
-                f"{{\"action\": \"{action}\", \"severity\": \"{sev}\"}}\n\n"
+                f'{{"action": "{action}", "severity": "{sev}"}}\n\n'
             )
         return examples_str.strip()
 
@@ -311,7 +333,7 @@ class MViTRetriever:
 # Prompt templates
 # ---------------------------------------------------------------------------
 
-ACTION_LIST_STR   = "\n".join(f"  - {a}" for a in ACTION_CLASSES)
+ACTION_LIST_STR = "\n".join(f"  - {a}" for a in ACTION_CLASSES)
 SEVERITY_LIST_STR = "\n".join(f"  - {s}" for s in SEVERITY_CLASSES)
 
 SYSTEM_PROMPT = (
@@ -427,9 +449,9 @@ Respond with ONLY this JSON:
 {{"action": "<action type>", "severity": "<severity>", "reasoning": "<one sentence citing rules or precedents>"}}"""
 
 
-def build_prompt(strategy: str, n_views: int,
-                 law12_context: str = "",
-                 dynamic_examples: str = "") -> str:
+def build_prompt(
+    strategy: str, n_views: int, law12_context: str = "", dynamic_examples: str = ""
+) -> str:
     kw = dict(
         n_views=n_views,
         action_list=ACTION_LIST_STR,
@@ -452,9 +474,10 @@ def build_prompt(strategy: str, n_views: int,
 # Response parser
 # ---------------------------------------------------------------------------
 
+
 def parse_response(text: str) -> Tuple[int, int]:
     text = re.sub(r"```json\s*|\s*```", "", text).strip()
-    match = re.search(r'\{.*\}', text, re.DOTALL)
+    match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         return -1, -1
     try:
@@ -469,12 +492,20 @@ def parse_response(text: str) -> Tuple[int, int]:
     s_str = data.get("severity", "")
 
     action_idx = next(
-        (i for i, a in enumerate(ACTION_CLASSES)
-         if a.lower() in a_str.lower() or a_str.lower() in a.lower()), -1
+        (
+            i
+            for i, a in enumerate(ACTION_CLASSES)
+            if a.lower() in a_str.lower() or a_str.lower() in a.lower()
+        ),
+        -1,
     )
     severity_idx = next(
-        (i for i, s in enumerate(SEVERITY_CLASSES)
-         if s.lower() in s_str.lower() or s_str.lower() in s.lower()), -1
+        (
+            i
+            for i, s in enumerate(SEVERITY_CLASSES)
+            if s.lower() in s_str.lower() or s_str.lower() in s.lower()
+        ),
+        -1,
     )
     return action_idx, severity_idx
 
@@ -483,20 +514,25 @@ def parse_response(text: str) -> Tuple[int, int]:
 # Qwen2.5-VL backend
 # ---------------------------------------------------------------------------
 
+
 class QwenVLBackend:
     def __init__(self, model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct"):
         from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+
         print(f"[QwenVL] Loading {model_name}...")
         self.processor = AutoProcessor.from_pretrained(
-            model_name, trust_remote_code=True)
+            model_name, trust_remote_code=True
+        )
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_name, torch_dtype=torch.bfloat16,
-            device_map="cuda", trust_remote_code=True)
+            model_name,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda",
+            trust_remote_code=True,
+        )
         self.model.eval()
         print("[QwenVL] Ready.")
 
-    def classify(self, frames_per_view: List[List[Image.Image]],
-                 prompt: str) -> str:
+    def classify(self, frames_per_view: List[List[Image.Image]], prompt: str) -> str:
         from qwen_vl_utils import process_vision_info
 
         content = []
@@ -509,27 +545,36 @@ class QwenVLBackend:
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": content},
+            {"role": "user", "content": content},
         ]
         text_input = self.processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True)
+            messages, tokenize=False, add_generation_prompt=True
+        )
         img_inputs, vid_inputs = process_vision_info(messages)
         inputs = self.processor(
-            text=[text_input], images=img_inputs, videos=vid_inputs,
-            padding=True, return_tensors="pt"
+            text=[text_input],
+            images=img_inputs,
+            videos=vid_inputs,
+            padding=True,
+            return_tensors="pt",
         ).to("cuda")
 
         with torch.no_grad():
             out = self.model.generate(
-                **inputs, max_new_tokens=512,
-                do_sample=False, temperature=None, top_p=None)
-        generated = out[:, inputs["input_ids"].shape[1]:]
+                **inputs,
+                max_new_tokens=512,
+                do_sample=False,
+                temperature=None,
+                top_p=None,
+            )
+        generated = out[:, inputs["input_ids"].shape[1] :]
         return self.processor.batch_decode(generated, skip_special_tokens=True)[0]
 
 
 # ---------------------------------------------------------------------------
 # Main classifier
 # ---------------------------------------------------------------------------
+
 
 class VLMFoulClassifier:
     """
@@ -539,17 +584,17 @@ class VLMFoulClassifier:
 
     def __init__(
         self,
-        backend:          str = "qwen",
-        strategy:         str = "rag_icl",
-        law12_pdf:        str = None,
-        frames_per_view:  int = 4,
+        backend: str = "qwen",
+        strategy: str = "rag_icl",
+        law12_pdf: str = None,
+        frames_per_view: int = 4,
         faiss_index_path: str = None,
-        faiss_meta_path:  str = None,
-        retrieval_k:      int = 3,
+        faiss_meta_path: str = None,
+        retrieval_k: int = 3,
     ):
-        self.strategy        = strategy
+        self.strategy = strategy
         self.frames_per_view = frames_per_view
-        self.retrieval_k     = retrieval_k
+        self.retrieval_k = retrieval_k
 
         # RAG over Law 12
         self.rag = Law12RAG(
