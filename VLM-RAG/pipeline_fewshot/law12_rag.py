@@ -22,7 +22,6 @@ import json
 import numpy as np
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # FIFA Law 12 key passages — hardcoded fallback if PDF not available
 # These are the most decision-relevant excerpts from Law 12 (2023/24 edition)
@@ -169,19 +168,39 @@ class Law12RAG:
     def _load_text(self, pdf_path):
         if pdf_path and Path(pdf_path).exists():
             try:
-                import fitz  # pymupdf
+                import fitz
+
                 doc = fitz.open(pdf_path)
                 text = ""
                 for page in doc:
                     text += page.get_text()
                 doc.close()
-                # Filter to Law 12 section if full Laws PDF
-                if "Law 12" in text or "FOULS" in text.upper():
-                    start = max(text.find("Law 12"), text.upper().find("FOULS AND MISCONDUCT"))
-                    end = text.find("Law 13")
-                    if start > 0 and end > start:
-                        text = text[start:end]
-                print(f"[Law12RAG] Parsed PDF: {pdf_path}")
+                print(f"[Law12RAG] Parsed PDF: {pdf_path} ({len(text)} chars)")
+
+                # Find Law 12 section — use min() not max()
+                idx_law12 = text.find("Law 12")
+                idx_fouls = text.upper().find("FOULS AND MISCONDUCT")
+
+                # Pick the earliest valid match
+                candidates = [i for i in [idx_law12, idx_fouls] if i > 0]
+                if candidates:
+                    start = min(candidates)
+                    # Find end — try several possible next section markers
+                    for end_marker in ["Law 13", "LAW 13", "Law 14", "LAW 14"]:
+                        end = text.find(end_marker, start + 100)
+                        if end > start:
+                            text = text[start:end]
+                            print(
+                                f"[Law12RAG] Extracted Law 12 section: {len(text)} chars"
+                            )
+                            break
+                    else:
+                        # No end marker found — take 5000 chars from start
+                        text = text[start : start + 5000]
+                        print(
+                            f"[Law12RAG] No end marker found, using first 5000 chars from Law 12 start"
+                        )
+
                 return text
             except ImportError:
                 print("[Law12RAG] pymupdf not available, using hardcoded passages.")
@@ -194,7 +213,7 @@ class Law12RAG:
     def _chunk(self, text: str, chunk_size: int):
         # Split on section headers and paragraph breaks
         # Prefer splitting at double newlines or === headers
-        raw = re.split(r'\n{2,}|(?====)', text)
+        raw = re.split(r"\n{2,}|={3,}", text)
         chunks = []
         current = ""
         for part in raw:
@@ -215,6 +234,7 @@ class Law12RAG:
     def _build_index(self):
         try:
             from sentence_transformers import SentenceTransformer
+
             self._model = SentenceTransformer("all-MiniLM-L6-v2")
             self.embeddings = self._model.encode(
                 self.chunks, convert_to_numpy=True, show_progress_bar=False
@@ -224,7 +244,9 @@ class Law12RAG:
             self.embeddings = self.embeddings / (norms + 1e-8)
             print("[Law12RAG] Embedding index built.")
         except ImportError:
-            print("[Law12RAG] sentence-transformers not available, using keyword retrieval.")
+            print(
+                "[Law12RAG] sentence-transformers not available, using keyword retrieval."
+            )
             self.use_embeddings = False
 
     # ------------------------------------------------------------------
@@ -257,7 +279,7 @@ class Law12RAG:
         q_emb = self._model.encode([query], convert_to_numpy=True)
         q_emb = q_emb / (np.linalg.norm(q_emb, axis=1, keepdims=True) + 1e-8)
         scores = (self.embeddings @ q_emb.T).squeeze()  # cosine similarity
-        top_idx = np.argsort(scores)[::-1][:self.top_k]
+        top_idx = np.argsort(scores)[::-1][: self.top_k]
         return [self.chunks[i] for i in top_idx]
 
     def _keyword_retrieve(self, query: str):
@@ -268,7 +290,7 @@ class Law12RAG:
             overlap = len(query_words & chunk_words)
             scored.append((overlap, chunk))
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [chunk for _, chunk in scored[:self.top_k]]
+        return [chunk for _, chunk in scored[: self.top_k]]
 
     # ------------------------------------------------------------------
     def build_query(self, action_type: str, context_hint: str = "") -> str:
@@ -288,15 +310,15 @@ class Law12RAG:
             Query string for retrieval.
         """
         action_keywords = {
-            "Tackling":          "tackle challenge from behind serious foul play red card",
+            "Tackling": "tackle challenge from behind serious foul play red card",
             "Standing tackling": "tackle standing challenge careless reckless yellow card",
-            "High leg":          "high leg raised foot dangerous head endangers safety",
-            "Holding":           "holding opponent arms shirt DOGSO",
-            "Pushing":           "pushing opponent excessive force reckless",
-            "Elbowing":          "elbow violent conduct arm opponent not playing ball",
-            "Challenge":         "challenge aerial jump opponent contact",
-            "Dive":              "diving simulation feigning injury yellow card",
-            "Dont know":         "foul misconduct direct free kick",
+            "High leg": "high leg raised foot dangerous head endangers safety",
+            "Holding": "holding opponent arms shirt DOGSO",
+            "Pushing": "pushing opponent excessive force reckless",
+            "Elbowing": "elbow violent conduct arm opponent not playing ball",
+            "Challenge": "challenge aerial jump opponent contact",
+            "Dive": "diving simulation feigning injury yellow card",
+            "Dont know": "foul misconduct direct free kick",
         }
         base = action_keywords.get(action_type, "foul misconduct")
         return f"{base} {context_hint}".strip()
