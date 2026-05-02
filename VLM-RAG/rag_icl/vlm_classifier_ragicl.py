@@ -281,7 +281,7 @@ class MViTRetriever:
 
         # [T, H, W, C] uint8 → [T, H, W, C] float → [1, C, T, H, W] for interpolate
         video = torch.from_numpy(frames_np.astype(np.float32))  # [T, H, W, C]
-        video = video.permute(3, 0, 1, 2)  # [C, T, H, W]
+        video = video.permute(0, 3, 1, 2)  # [C, T, H, W]
         video = video.unsqueeze(0)  # [1, C, T, H, W]
 
         # Resample time dimension to 16 frames
