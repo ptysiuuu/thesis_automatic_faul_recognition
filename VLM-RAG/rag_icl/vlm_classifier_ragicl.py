@@ -273,20 +273,20 @@ class MViTRetriever:
 
     @torch.no_grad()
     def _extract_feature(self, pil_frames: List[Image.Image]) -> np.ndarray:
-        """frames_np : [T, H, W, C] uint8"""
-        # Subsample T frames evenly → [16, H, W, C]
-        T = len(pil_frames)
+        # Convert PIL list → numpy [T, H, W, C]
+        frames_np = np.stack([np.array(f.convert("RGB")) for f in pil_frames])
+
+        # Subsample to TARGET_FRAMES
+        T = len(frames_np)
         indices = np.linspace(0, T - 1, self.TARGET_FRAMES, dtype=int)
-        frames_sampled = pil_frames[indices]  # [16, H, W, C]
+        frames_sampled = frames_np[indices]  # [16, H, W, C]
 
         # [16, H, W, C] → [16, C, H, W] uint8 for MViT transform
-        video = torch.from_numpy(frames_sampled)  # [16, H, W, C]
+        video = torch.from_numpy(frames_sampled)  # [16, H, W, C] uint8
         video = video.permute(0, 3, 1, 2)  # [16, C, H, W]
 
         # MViT transform expects [T, C, H, W] uint8
-        input_tensor = (
-            self.transform(video).unsqueeze(0).to(self.device)
-        )  # [1, C, T, H, W]
+        input_tensor = self.transform(video).unsqueeze(0).to(self.device)
 
         feat = self.model(input_tensor).cpu().numpy().astype(np.float32).flatten()
         norm = np.linalg.norm(feat)
