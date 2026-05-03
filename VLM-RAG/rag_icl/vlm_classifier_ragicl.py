@@ -168,18 +168,19 @@ class Law12RAG:
         return LAW12_HARDCODED
 
     def _chunk(self, text: str, chunk_size: int):
-        raw = re.split(r"\n{2,}", text)
+        # Split on any newline, then re-aggregate
+        lines = text.split("\n")
         chunks, current = [], ""
-        for part in raw:
-            part = part.strip()
-            if not part:
+        for line in lines:
+            line = line.strip()
+            if not line:
                 continue
-            if len(current) + len(part) < chunk_size:
-                current += "\n" + part
+            if len(current) + len(line) < chunk_size:
+                current += " " + line
             else:
                 if current:
                     chunks.append(current.strip())
-                current = part
+                current = line
         if current:
             chunks.append(current.strip())
         return [c for c in chunks if len(c) > 50]
@@ -272,35 +273,20 @@ class MViTRetriever:
 
     @torch.no_grad()
     def _extract_feature(self, pil_frames: List[Image.Image]) -> np.ndarray:
-        """
-        frames_np : [T, H, W, C] uint8
-        Returns   : [768] float32
-        """
-        # Convert PIL frames list to numpy array [T, H, W, C]
-        frames_np = np.stack([np.array(p) for p in pil_frames])
+        """frames_np : [T, H, W, C] uint8"""
+        # Subsample T frames evenly → [16, H, W, C]
+        T = len(pil_frames)
+        indices = np.linspace(0, T - 1, self.TARGET_FRAMES, dtype=int)
+        frames_sampled = pil_frames[indices]  # [16, H, W, C]
 
-        # [T, H, W, C] uint8 → [T, H, W, C] float → [1, C, T, H, W] for interpolate
-        video = torch.from_numpy(frames_np.astype(np.float32))  # [T, H, W, C]
-        video = video.permute(0, 3, 1, 2)  # [C, T, H, W]
-        video = video.unsqueeze(0)  # [1, C, T, H, W]
+        # [16, H, W, C] → [16, C, H, W] uint8 for MViT transform
+        video = torch.from_numpy(frames_sampled)  # [16, H, W, C]
+        video = video.permute(0, 3, 1, 2)  # [16, C, H, W]
 
-        # Resample time dimension to 16 frames
-        T = video.shape[2]
-        if T != self.TARGET_FRAMES:
-            video = F.interpolate(
-                video,
-                size=(self.TARGET_FRAMES, video.shape[3], video.shape[4]),
-                mode="trilinear",
-                align_corners=False,
-            )  # [1, C, 16, H, W]
-
-        # Convert back to uint8 [C, T, H, W] for MViT transforms
-        video_uint8 = video.squeeze(0).clamp(0, 255).to(torch.uint8)  # [C, 16, H, W]
-
-        # MViT transform expects [C, T, H, W] uint8
+        # MViT transform expects [T, C, H, W] uint8
         input_tensor = (
-            self.transform(video_uint8).unsqueeze(0).to(self.device)
-        )  # [1, C, 16, H, W]
+            self.transform(video).unsqueeze(0).to(self.device)
+        )  # [1, C, T, H, W]
 
         feat = self.model(input_tensor).cpu().numpy().astype(np.float32).flatten()
         norm = np.linalg.norm(feat)
