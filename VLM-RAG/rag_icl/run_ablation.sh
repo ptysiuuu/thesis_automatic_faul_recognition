@@ -9,7 +9,9 @@
 #   sbatch run_ablation.sh data_driven
 #   sbatch run_ablation.sh two_stage
 #   sbatch run_ablation.sh rag_icl
+#   sbatch run_ablation.sh cos_two_stage
 #   sbatch run_ablation.sh static_few_shot 50     ← quick 50-sample test
+#   sbatch run_ablation.sh cos_two_stage   50     ← quick 50-sample test
 # =============================================================================
 #SBATCH --job-name=vlm_ablation
 #SBATCH --partition=plgrid-gpu-a100

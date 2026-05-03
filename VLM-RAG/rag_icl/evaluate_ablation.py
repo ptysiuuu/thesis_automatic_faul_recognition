@@ -9,6 +9,10 @@ ABLATION ROWS:
   Row 1 — data_driven (mined medoid examples + class balance + severity prior)
   Row 2 — two_stage (data_driven examples, but action predicted first, then severity)
   Row 3 — rag_icl (MViT FAISS retrieval, dynamic examples)
+  Row 4 — cos_two_stage (Chain-of-Shot frame selection + two-stage, inspired by CoS paper)
+           Stage 0: VLM picks the single most informative frame per view (contact moment)
+           Stage 1: classify action using only the selected key frames
+           Stage 2: classify severity conditioned on action + key frames
 
 Usage examples:
 
@@ -43,6 +47,12 @@ Usage examples:
     ... (same as row 1) ... \\
     --strategy    rag_icl \\
     --output_dir  ablation_results/row3_ragicl
+
+  # Row 4: CoS two-stage (Chain-of-Shot + two-stage)
+  python evaluate_ablation.py \\
+    ... (same as row 1) ... \\
+    --strategy    cos_two_stage \\
+    --output_dir  ablation_results/row4_cos_two_stage
 
   # Quick smoke test (50 samples)
   python evaluate_ablation.py ... --strategy data_driven --max_samples 50
@@ -630,6 +640,108 @@ Respond with ONLY this JSON:
 {{"action": "<action type>", "severity": "<severity>", "reasoning": "<one sentence>"}}"""
 
 
+# ── Row 4: Chain-of-Shot prompts ──────────────────────────────────────────
+
+def build_cos_frame_selection_prompt(n_views: int, frames_per_view: int) -> str:
+    """
+    Stage 0 of CoS two-stage: ask VLM to identify the single most informative
+    frame index per view — the frame that most clearly shows the contact moment
+    or peak action. Returns frame indices used in stages 1 & 2.
+
+    Frame numbering convention: frames within each view are numbered 0..frames_per_view-1.
+    Views are labeled as in the main prompt (Live camera = view 0, Replay N = view N).
+    """
+    view_labels = ["Live camera"] + [f"Replay {i}" for i in range(1, n_views)]
+    view_list = "\n".join(
+        f'  - "{label}": a number from 0 to {frames_per_view - 1}'
+        for label in view_labels
+    )
+    return f"""\
+You are analyzing a potential football foul incident.
+You are shown {frames_per_view} frames from each of {n_views} camera angles.
+The frames within each view are numbered 0 (earliest) to {frames_per_view - 1} (latest).
+
+Your task: for each camera view, identify the SINGLE most informative frame —
+the frame that most clearly shows the moment of physical contact, attempted contact,
+or the peak of the relevant action (e.g., foot position at impact, elbow contact, body fall).
+
+This is the "Chain-of-Shot" selection step. You must pick one frame index per view.
+Do NOT classify the foul yet — only select the key frames.
+
+Camera views present:
+{view_list}
+
+Respond with ONLY this JSON (one key per view label, value is the frame index 0-{frames_per_view - 1}):
+{{{", ".join(f'"{label}": <0-{frames_per_view - 1}>' for label in view_labels)}}}"""
+
+
+def build_cos_action_prompt(n_views: int, law12_context: str,
+                             mined_examples: str,
+                             selected_frame_info: str) -> str:
+    """Stage 1 of CoS two-stage: classify action using key frames only."""
+    return f"""\
+You are analyzing a potential football foul from {n_views} camera angles.
+View 0 is the live broadcast camera. Views 1+ are replay cameras.
+
+IMPORTANT: The frames shown below are the KEY FRAMES you previously identified as
+most informative for this incident:
+{selected_frame_info}
+Focus your analysis on these frames — they show the critical contact moment.
+
+{law12_context}
+
+Reference examples from training data:
+{mined_examples}
+
+Based on the key frames, identify the ACTION TYPE of this incident.
+
+ACTION TYPE (choose exactly one):
+{ACTION_LIST_STR}
+
+Respond with ONLY this JSON:
+{{"action": "<action type>", "reasoning": "<one sentence describing the body mechanics visible in the key frame>"}}"""
+
+
+def build_cos_severity_prompt(n_views: int, law12_context: str,
+                               predicted_action: str,
+                               severity_examples: str,
+                               severity_priors: dict,
+                               selected_frame_info: str) -> str:
+    """Stage 2 of CoS two-stage: classify severity given action and key frames."""
+    prior_str = ", ".join(f"{k}: {v}%" for k, v in severity_priors.items())
+    return f"""\
+You are analyzing a potential football foul from {n_views} camera angles.
+View 0 is the live broadcast camera. Views 1+ are replay cameras.
+
+IMPORTANT: The frames shown below are the KEY FRAMES most informative for this incident:
+{selected_frame_info}
+Focus your force/contact assessment on these frames.
+
+The action type has been identified as: {predicted_action}
+
+{law12_context}
+
+Examples of "{predicted_action}" incidents with official decisions:
+{severity_examples}
+
+SEVERITY CALIBRATION: {prior_str}
+Do not default to Yellow card — Red card and No offence are equally valid outcomes.
+
+Assess the SEVERITY based on the force level visible in the key frames:
+
+SEVERITY (choose exactly one):
+{SEVERITY_LIST_STR}
+
+Rules:
+- EXCESSIVE FORCE / endangering safety → RED CARD
+- RECKLESS (disregard for opponent)    → YELLOW CARD
+- CARELESS (lack of attention)         → No card but foul
+- NO CONTACT / SIMULATION              → No offence
+
+Respond with ONLY this JSON:
+{{"severity": "<severity>", "reasoning": "<one sentence citing the force level seen in key frame>"}}"""
+
+
 # ---------------------------------------------------------------------------
 # Response parser
 # ---------------------------------------------------------------------------
@@ -687,6 +799,65 @@ def parse_severity_only(text: str) -> int:
     return next(
         (i for i, s in enumerate(SEVERITY_CLASSES)
          if s.lower() in s_str.lower() or s_str.lower() in s.lower()), -1)
+
+
+def parse_key_frames(text: str, n_views: int,
+                     frames_per_view: int) -> List[int]:
+    """
+    Parse the CoS frame selection response.
+    Returns a list of length n_views with selected frame index per view.
+    Falls back to the middle frame (frames_per_view // 2) on parse failure.
+    """
+    default = frames_per_view // 2
+    result = [default] * n_views
+
+    text = re.sub(r"```json\s*|\s*```", "", text).strip()
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return result
+    try:
+        data = json.loads(match.group())
+    except Exception:
+        return result
+
+    view_labels = ["Live camera"] + [f"Replay {i}" for i in range(1, n_views)]
+    for v_idx, label in enumerate(view_labels):
+        val = data.get(label, default)
+        try:
+            idx = int(val)
+            result[v_idx] = max(0, min(frames_per_view - 1, idx))
+        except (TypeError, ValueError):
+            result[v_idx] = default
+
+    return result
+
+
+def select_key_frames(frames_per_view_list: List[List[Image.Image]],
+                      key_frame_indices: List[int],
+                      context_window: int = 1) -> List[List[Image.Image]]:
+    """
+    For each view, return only the key frame ± context_window adjacent frames.
+    context_window=1 means up to 3 frames per view (key-1, key, key+1).
+    This is the "positive shot" subset from Chain-of-Shot.
+    """
+    selected = []
+    for v_idx, frames in enumerate(frames_per_view_list):
+        key = key_frame_indices[v_idx] if v_idx < len(key_frame_indices) else len(frames) // 2
+        lo = max(0, key - context_window)
+        hi = min(len(frames) - 1, key + context_window)
+        selected.append(frames[lo:hi + 1])
+    return selected
+
+
+def format_selected_frame_info(key_frame_indices: List[int],
+                                n_views: int) -> str:
+    """Human-readable summary of which frames were selected."""
+    view_labels = ["Live camera"] + [f"Replay {i}" for i in range(1, n_views)]
+    lines = []
+    for v_idx, label in enumerate(view_labels[:n_views]):
+        idx = key_frame_indices[v_idx] if v_idx < len(key_frame_indices) else "?"
+        lines.append(f"  {label}: frame {idx}")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -937,9 +1108,9 @@ def evaluate(args):
         severity_priors = SEVERITY_PRIOR_DEFAULT
         print(f"[Priors] Using default priors: {severity_priors}")
 
-    # Load medoid cache for data_driven / two_stage
+    # Load medoid cache for data_driven / two_stage / cos_two_stage
     medoid_cache = None
-    if args.strategy in ("data_driven", "two_stage"):
+    if args.strategy in ("data_driven", "two_stage", "cos_two_stage"):
         if not args.medoid_cache or not Path(args.medoid_cache).exists():
             raise FileNotFoundError(
                 f"Medoid cache not found: {args.medoid_cache}\n"
@@ -1065,6 +1236,66 @@ def evaluate(args):
                     raw = backend.classify(frames_per_view_list, prompt)
                     act_idx, sev_idx = parse_response(raw)
 
+                # ── Row 4: cos_two_stage ──────────────────────────────────
+                elif args.strategy == "cos_two_stage":
+                    n_views = len(frames_per_view_list)
+
+                    # Stage 0: frame selection (Chain-of-Shot)
+                    cos_select_prompt = build_cos_frame_selection_prompt(
+                        n_views=n_views,
+                        frames_per_view=args.frames_per_view,
+                    )
+                    raw_stage0 = backend.classify(frames_per_view_list,
+                                                  cos_select_prompt)
+                    key_indices = parse_key_frames(
+                        raw_stage0,
+                        n_views=n_views,
+                        frames_per_view=args.frames_per_view,
+                    )
+
+                    # Extract key-frame subsets (key frame ± 1 adjacent frame)
+                    key_frames_list = select_key_frames(
+                        frames_per_view_list, key_indices, context_window=1)
+                    selected_info = format_selected_frame_info(key_indices, n_views)
+
+                    # Stage 1: classify action using key frames
+                    all_mined_text, all_mined_imgs = build_mined_examples_text(
+                        medoid_cache, n_per_class=1)
+                    stage1_prompt = build_cos_action_prompt(
+                        n_views=n_views,
+                        law12_context=law12_ctx,
+                        mined_examples=all_mined_text,
+                        selected_frame_info=selected_info,
+                    )
+                    raw_stage1 = backend.classify(
+                        key_frames_list, stage1_prompt,
+                        extra_images=all_mined_imgs,
+                    )
+                    act_idx = parse_action_only(raw_stage1)
+                    act_idx_str = ACTION_CLASSES[act_idx] if act_idx != -1 else "Dont know"
+
+                    # Stage 2: classify severity using key frames + action context
+                    sev_examples_text, sev_example_imgs = build_severity_examples_for_action(
+                        medoid_cache, action=act_idx_str)
+                    stage2_law12 = rag.retrieve(rag.build_query(act_idx_str))
+                    stage2_prompt = build_cos_severity_prompt(
+                        n_views=n_views,
+                        law12_context=stage2_law12,
+                        predicted_action=act_idx_str,
+                        severity_examples=sev_examples_text,
+                        severity_priors=severity_priors,
+                        selected_frame_info=selected_info,
+                    )
+                    raw_stage2 = backend.classify(
+                        key_frames_list, stage2_prompt,
+                        extra_images=sev_example_imgs if sev_example_imgs else None,
+                    )
+                    sev_idx = parse_severity_only(raw_stage2)
+                    raw = (f"STAGE0 (key frames): {raw_stage0}\n"
+                           f"Selected: {selected_info}\n"
+                           f"STAGE1 (action): {raw_stage1}\n"
+                           f"STAGE2 (severity): {raw_stage2}")
+
                 else:
                     raise ValueError(f"Unknown strategy: {args.strategy}")
 
@@ -1126,7 +1357,8 @@ def main():
 
     # ── Strategy ─────────────────────────────────────────────────────────
     parser.add_argument("--strategy",
-        choices=["static_few_shot", "data_driven", "two_stage", "rag_icl"],
+        choices=["static_few_shot", "data_driven", "two_stage", "rag_icl",
+                 "cos_two_stage"],
         default="static_few_shot",
         help="Ablation row to evaluate.")
 
