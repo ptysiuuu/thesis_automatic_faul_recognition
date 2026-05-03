@@ -287,18 +287,25 @@ class MViTRetriever:
 
     def retrieve(self, live_frames: List[Image.Image], k: int = 3) -> str:
         """
-        live_frames : PIL frames from the live (view 0) camera
-        Returns     : formatted string of K precedents for prompt injection
+        Retrieve one example per action class (diverse retrieval).
+        Searches top-50 candidates, picks first occurrence of each unique action.
         """
-        feat = self._extract_feature(live_frames).reshape(1, -1)
-        distances, indices = self.index.search(feat, k)
+        feat = self._extract_feature(live_frames).reshape(1, -1).astype(np.float32)
+        n_candidates = min(self.index.ntotal, 50)
+        distances, indices = self.index.search(feat, n_candidates)
 
-        examples_str = ""
-        for rank, idx in enumerate(indices[0], 1):
+        seen_actions = {}
+        for dist, idx in zip(distances[0], indices[0]):
             meta = self.metadata.get(str(idx), {})
             action = meta.get("action", "Unknown")
+            if action not in seen_actions:
+                seen_actions[action] = (float(dist), meta)
+            if len(seen_actions) >= k:
+                break
+
+        examples_str = ""
+        for rank, (action, (dist, meta)) in enumerate(seen_actions.items(), 1):
             sev = meta.get("severity", "Unknown")
-            dist = float(distances[0][rank - 1])
             examples_str += (
                 f"PRECEDENT {rank} "
                 f"(visual similarity distance={dist:.3f}):\n"
