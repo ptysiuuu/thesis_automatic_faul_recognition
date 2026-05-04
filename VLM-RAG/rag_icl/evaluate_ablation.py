@@ -1026,6 +1026,117 @@ class QwenVLBackend:
 
 
 # ---------------------------------------------------------------------------
+# Phi-4-Reasoning-Vision backend
+# ---------------------------------------------------------------------------
+
+PHI4_SYSTEM_PROMPT = (
+    "You are Phi, a multimodal model trained by Microsoft to help users. "
+    "Your role as an assistant is to provide accurate, coherent, and actionable "
+    "responses. For this task, use THINK mode: reason step by step about the "
+    "video frames before giving your final JSON answer."
+)
+
+PHI4_MODELS = {
+    "microsoft/Phi-4-reasoning-vision-15B",
+}
+
+
+class Phi4VisionBackend:
+    """Backend for microsoft/Phi-4-reasoning-vision-15B.
+
+    Key differences from QwenVLBackend:
+    - Uses AutoModelForCausalLM + AutoProcessor (custom_code architecture)
+    - Images passed as PIL objects directly in message content dicts
+    - Model produces <think>...</think> chain-of-thought before JSON answer
+    - Context window is 16,384 tokens - cap at 2 frames/view
+    - Separator token is <|im_sep|> not <|im_end|>
+    """
+
+    MAX_FRAMES_PER_VIEW = 2  # 4 views x 2 frames x ~600 tok/img ~ 4800 visual tokens
+
+    def __init__(self, model_name: str = "microsoft/Phi-4-reasoning-vision-15B"):
+        from transformers import AutoModelForCausalLM, AutoProcessor
+
+        print(f"[Phi4Vision] Loading {model_name}...")
+        self.processor = AutoProcessor.from_pretrained(
+            model_name, trust_remote_code=True
+        )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda",
+            trust_remote_code=True,
+        )
+        self.model.eval()
+        print("[Phi4Vision] Ready.")
+
+    def classify(
+        self,
+        frames_per_view: List[List[Image.Image]],
+        prompt: str,
+        extra_images: List[Image.Image] = None,
+    ) -> str:
+
+        content = []
+
+        if extra_images:
+            content.append(
+                {"type": "text", "text": "[Reference examples from training data:]"}
+            )
+            for img in extra_images:
+                content.append({"type": "image", "image": img})
+
+        for v_idx, frames in enumerate(frames_per_view):
+            label = "Live camera" if v_idx == 0 else f"Replay {v_idx}"
+            content.append({"type": "text", "text": f"\n[{label}]"})
+            for frame in frames[: self.MAX_FRAMES_PER_VIEW]:
+                content.append({"type": "image", "image": frame})
+
+        content.append({"type": "text", "text": f"\n\n{prompt}"})
+
+        messages = [
+            {"role": "system", "content": PHI4_SYSTEM_PROMPT},
+            {"role": "user", "content": content},
+        ]
+
+        text_input = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+
+        all_images = list(extra_images) if extra_images else []
+        for frames in frames_per_view:
+            all_images.extend(frames[: self.MAX_FRAMES_PER_VIEW])
+
+        inputs = self.processor(
+            text=text_input,
+            images=all_images if all_images else None,
+            return_tensors="pt",
+        ).to("cuda")
+
+        with torch.no_grad():
+            out = self.model.generate(
+                **inputs,
+                max_new_tokens=1024,
+                do_sample=False,
+                temperature=None,
+                top_p=None,
+            )
+        generated = out[:, inputs["input_ids"].shape[1] :]
+        raw = self.processor.batch_decode(generated, skip_special_tokens=True)[0]
+
+        # Strip <think>...</think> chain-of-thought — keep only final answer
+        import re as _re
+
+        raw_clean = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
+        suffix = (
+            f"\n[COT STRIPPED — original length: {len(raw)} chars]"
+            if len(raw) > len(raw_clean) + 5
+            else ""
+        )
+        return raw_clean + suffix
+
+
+# ---------------------------------------------------------------------------
 # MViT FAISS retriever (for rag_icl)
 # ---------------------------------------------------------------------------
 
@@ -1251,8 +1362,11 @@ def evaluate(args):
             )
         retriever = MViTRetriever(args.faiss_index_path, args.faiss_meta_path)
 
-    # VLM backend (loaded once, reused)
-    backend = QwenVLBackend(model_name=args.model_name)
+    # VLM backend — auto-select based on model name
+    if args.model_name in PHI4_MODELS:
+        backend = Phi4VisionBackend(model_name=args.model_name)
+    else:
+        backend = QwenVLBackend(model_name=args.model_name)
 
     # Eval loop
     y_true_a, y_pred_a = [], []

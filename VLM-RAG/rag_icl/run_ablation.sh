@@ -31,6 +31,12 @@
 #   # Model comparison smoke tests
 #   sbatch run_ablation.sh static_few_shot 50 Video-R1/Video-R1-7B ablation_results/video_r1_static_few_shot_50
 #   sbatch run_ablation.sh cos_two_stage   50 Video-R1/Video-R1-7B ablation_results/video_r1_cos_two_stage_50
+#
+#   # Phi-4-Reasoning-Vision-15B (auto-detected, uses Phi4VisionBackend)
+#   sbatch run_ablation.sh static_few_shot 50 microsoft/Phi-4-reasoning-vision-15B ablation_results/phi4_static_few_shot_50
+#   sbatch run_ablation.sh static_few_shot "" microsoft/Phi-4-reasoning-vision-15B ablation_results/phi4_static_few_shot
+#   sbatch run_ablation.sh cos_two_stage   50 microsoft/Phi-4-reasoning-vision-15B ablation_results/phi4_cos_two_stage_50
+#   sbatch run_ablation.sh cos_two_stage   "" microsoft/Phi-4-reasoning-vision-15B ablation_results/phi4_cos_two_stage
 # =============================================================================
 #SBATCH --job-name=vlm_ablation
 #SBATCH --partition=plgrid-gpu-a100
