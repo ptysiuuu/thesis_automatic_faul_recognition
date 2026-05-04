@@ -88,16 +88,25 @@ from sklearn.metrics import balanced_accuracy_score, accuracy_score, confusion_m
 # ---------------------------------------------------------------------------
 
 ACTION_CLASSES = [
-    "Tackling", "Standing tackling", "High leg", "Holding",
-    "Pushing", "Elbowing", "Challenge", "Dive",
+    "Tackling",
+    "Standing tackling",
+    "High leg",
+    "Holding",
+    "Pushing",
+    "Elbowing",
+    "Challenge",
+    "Dive",
 ]
 SEVERITY_CLASSES = ["No offence", "No card", "Yellow card", "Red card"]
-ACTION_TO_IDX  = {a: i for i, a in enumerate(ACTION_CLASSES)}
+ACTION_TO_IDX = {a: i for i, a in enumerate(ACTION_CLASSES)}
 SEVERITY_TO_IDX = {s: i for i, s in enumerate(SEVERITY_CLASSES)}
 
 OFFENCE_SEVERITY_MAP = {
-    ("No offence", ""): 0, ("No Offence", ""): 0,
-    ("Offence", "1.0"): 1, ("Offence", "3.0"): 2, ("Offence", "5.0"): 3,
+    ("No offence", ""): 0,
+    ("No Offence", ""): 0,
+    ("Offence", "1.0"): 1,
+    ("Offence", "3.0"): 2,
+    ("Offence", "5.0"): 3,
 }
 
 # Training-set severity priors (used for calibration hint in prompt).
@@ -114,21 +123,25 @@ SEVERITY_PRIOR_DEFAULT = {
 # Annotation loader (shared)
 # ---------------------------------------------------------------------------
 
+
 def load_annotations(path: str) -> dict:
     with open(path) as f:
         data = json.load(f)
     samples = {}
     for action_id, action_data in data["Actions"].items():
-        action_class   = action_data.get("Action class", "")
-        offence_class  = action_data.get("Offence", "")
+        action_class = action_data.get("Action class", "")
+        offence_class = action_data.get("Offence", "")
         severity_class = action_data.get("Severity", "")
 
         if action_class in {"Dont know", ""}:
             continue
         if offence_class in {"Between", ""} and action_class != "Dive":
             continue
-        if severity_class in {"2.0", "4.0"} and action_class != "Dive" \
-                and offence_class not in ("No offence", "No Offence"):
+        if (
+            severity_class in {"2.0", "4.0"}
+            and action_class != "Dive"
+            and offence_class not in ("No offence", "No Offence")
+        ):
             continue
         if offence_class in {"Between", ""}:
             offence_class = "Offence"
@@ -149,9 +162,9 @@ def load_annotations(path: str) -> dict:
 
         clips = [c["Url"].split("/")[-1] for c in action_data.get("Clips", [])]
         samples[action_id] = {
-            "action":   action_idx,
+            "action": action_idx,
             "severity": severity_idx,
-            "clips":    clips,
+            "clips": clips,
         }
     return samples
 
@@ -160,8 +173,10 @@ def load_annotations(path: str) -> dict:
 # Frame utilities
 # ---------------------------------------------------------------------------
 
-def extract_keyframes(hdf5_file, action_key: str, clip_key: str,
-                      n_frames: int = 4) -> List[Image.Image]:
+
+def extract_keyframes(
+    hdf5_file, action_key: str, clip_key: str, n_frames: int = 4
+) -> List[Image.Image]:
     key = f"{action_key}/{clip_key}"
     if key not in hdf5_file:
         return []
@@ -179,6 +194,7 @@ def frames_to_base64(frames: List[Image.Image]) -> List[str]:
         buf = BytesIO()
         img.save(buf, format="JPEG", quality=85)
         import base64
+
         result.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
     return result
 
@@ -202,8 +218,9 @@ TACKLING FROM BEHIND endangering safety → RED CARD.
 
 
 class Law12RAG:
-    def __init__(self, pdf_path: str = None, top_k: int = 3,
-                 use_embeddings: bool = True):
+    def __init__(
+        self, pdf_path: str = None, top_k: int = 3, use_embeddings: bool = True
+    ):
         self.top_k = top_k
         self.use_embeddings = use_embeddings
         self.chunks = []
@@ -220,6 +237,7 @@ class Law12RAG:
         if pdf_path and Path(pdf_path).exists():
             try:
                 import fitz
+
                 doc = fitz.open(pdf_path)
                 text = "".join(page.get_text() for page in doc)
                 doc.close()
@@ -232,7 +250,7 @@ class Law12RAG:
                         end = text.find(end_marker, start + 100)
                         if end > start:
                             return text[start:end]
-                    return text[start:start + 6000]
+                    return text[start : start + 6000]
             except Exception as e:
                 print(f"[Law12RAG] PDF error: {e}")
         return LAW12_HARDCODED
@@ -257,9 +275,11 @@ class Law12RAG:
     def _build_index(self):
         try:
             from sentence_transformers import SentenceTransformer
+
             self._model = SentenceTransformer("all-MiniLM-L6-v2")
-            emb = self._model.encode(self.chunks, convert_to_numpy=True,
-                                     show_progress_bar=False)
+            emb = self._model.encode(
+                self.chunks, convert_to_numpy=True, show_progress_bar=False
+            )
             norms = np.linalg.norm(emb, axis=1, keepdims=True)
             self.embeddings = emb / (norms + 1e-8)
         except ImportError:
@@ -270,13 +290,15 @@ class Law12RAG:
             q = self._model.encode([query], convert_to_numpy=True)
             q = q / (np.linalg.norm(q, axis=1, keepdims=True) + 1e-8)
             scores = (self.embeddings @ q.T).squeeze()
-            top_idx = np.argsort(scores)[::-1][:self.top_k]
+            top_idx = np.argsort(scores)[::-1][: self.top_k]
             passages = [self.chunks[i] for i in top_idx]
         else:
             qw = set(query.lower().split())
-            passages = sorted(self.chunks,
-                              key=lambda c: len(qw & set(c.lower().split())),
-                              reverse=True)[:self.top_k]
+            passages = sorted(
+                self.chunks,
+                key=lambda c: len(qw & set(c.lower().split())),
+                reverse=True,
+            )[: self.top_k]
         ctx = "=== Relevant FIFA Law 12 Rules ===\n\n"
         for i, p in enumerate(passages, 1):
             ctx += f"[Rule {i}]\n{p}\n\n"
@@ -284,15 +306,15 @@ class Law12RAG:
 
     def build_query(self, action_type: str) -> str:
         kw = {
-            "Tackling":          "tackle challenge from behind serious foul play red card",
+            "Tackling": "tackle challenge from behind serious foul play red card",
             "Standing tackling": "tackle standing challenge careless reckless yellow card",
-            "High leg":          "high leg raised foot dangerous head endangers safety",
-            "Holding":           "holding opponent arms shirt DOGSO",
-            "Pushing":           "pushing opponent excessive force reckless",
-            "Elbowing":          "elbow violent conduct arm opponent not playing ball",
-            "Challenge":         "challenge aerial jump opponent contact",
-            "Dive":              "diving simulation feigning injury yellow card",
-            "Dont know":         "foul misconduct direct free kick",
+            "High leg": "high leg raised foot dangerous head endangers safety",
+            "Holding": "holding opponent arms shirt DOGSO",
+            "Pushing": "pushing opponent excessive force reckless",
+            "Elbowing": "elbow violent conduct arm opponent not playing ball",
+            "Challenge": "challenge aerial jump opponent contact",
+            "Dive": "diving simulation feigning injury yellow card",
+            "Dont know": "foul misconduct direct free kick",
         }
         return kw.get(action_type, "foul misconduct")
 
@@ -301,12 +323,14 @@ class Law12RAG:
 # MViT feature extractor
 # ---------------------------------------------------------------------------
 
+
 class MViTExtractor:
     TARGET_FRAMES = 16
     FEAT_DIM = 768
 
     def __init__(self, device: str = "cuda"):
         from torchvision.models.video import mvit_v2_s, MViT_V2_S_Weights
+
         self.device = device
         weights = MViT_V2_S_Weights.DEFAULT
         model = mvit_v2_s(weights=weights)
@@ -343,9 +367,15 @@ class MViTExtractor:
 # Medoid cache builder
 # ---------------------------------------------------------------------------
 
-def build_medoid_cache(train_hdf5_path: str, train_annotations_path: str,
-                       faiss_index_path: str, faiss_meta_path: str,
-                       output_path: str, n_frames_per_example: int = 2):
+
+def build_medoid_cache(
+    train_hdf5_path: str,
+    train_annotations_path: str,
+    faiss_index_path: str,
+    faiss_meta_path: str,
+    output_path: str,
+    n_frames_per_example: int = 2,
+):
     """
     For each (action, severity) class combination, find the training sample
     whose MViT feature is closest to the class centroid (medoid).
@@ -398,8 +428,9 @@ def build_medoid_cache(train_hdf5_path: str, train_annotations_path: str,
     train_samples = load_annotations(train_annotations_path)
 
     # Build reverse map: faiss_idx → action_id
-    faiss_to_action = {int(idx_str): meta["action_id"]
-                       for idx_str, meta in metadata.items()}
+    faiss_to_action = {
+        int(idx_str): meta["action_id"] for idx_str, meta in metadata.items()
+    }
 
     cache = {}
     with h5py.File(train_hdf5_path, "r", swmr=True) as hdf5:
@@ -431,14 +462,15 @@ def build_medoid_cache(train_hdf5_path: str, train_annotations_path: str,
                     buf = BytesIO()
                     img.save(buf, format="JPEG", quality=85)
                     import base64
+
                     frames_b64.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
 
             if frames_b64:
                 action_str, severity_str = key.split("|")
                 cache[key] = {
-                    "action":     action_str,
-                    "severity":   severity_str,
-                    "action_id":  action_id,
+                    "action": action_str,
+                    "severity": severity_str,
+                    "action_id": action_id,
                     "frames_b64": frames_b64,
                 }
                 print(f"  ✓ {key} → action_id={action_id}, {len(frames_b64)} frames")
@@ -461,6 +493,7 @@ def load_medoid_cache(path: str) -> dict:
 # Severity prior computation
 # ---------------------------------------------------------------------------
 
+
 def compute_severity_priors(train_annotations_path: str) -> dict:
     """Compute actual severity distribution from training set."""
     samples = load_annotations(train_annotations_path)
@@ -482,7 +515,7 @@ SYSTEM_PROMPT = (
     "Always respond with ONLY a JSON object — no other text."
 )
 
-ACTION_LIST_STR   = "\n".join(f"  - {a}" for a in ACTION_CLASSES)
+ACTION_LIST_STR = "\n".join(f"  - {a}" for a in ACTION_CLASSES)
 SEVERITY_LIST_STR = "\n".join(f"  - {s}" for s in SEVERITY_CLASSES)
 
 STATIC_EXAMPLES = """\
@@ -529,9 +562,9 @@ Respond with ONLY this JSON:
 {{"action": "<action type>", "severity": "<severity>", "reasoning": "<one sentence>"}}"""
 
 
-def build_data_driven_prompt(n_views: int, law12_context: str,
-                              mined_examples: str,
-                              severity_priors: dict) -> str:
+def build_data_driven_prompt(
+    n_views: int, law12_context: str, mined_examples: str, severity_priors: dict
+) -> str:
     prior_str = ", ".join(f"{k}: {v}%" for k, v in severity_priors.items())
     return f"""\
 You are analyzing a potential football foul from {n_views} camera angles.
@@ -560,8 +593,9 @@ Respond with ONLY this JSON:
 {{"action": "<action type>", "severity": "<severity>", "reasoning": "<one sentence>"}}"""
 
 
-def build_two_stage_action_prompt(n_views: int, law12_context: str,
-                                   mined_examples: str) -> str:
+def build_two_stage_action_prompt(
+    n_views: int, law12_context: str, mined_examples: str
+) -> str:
     """Stage 1: predict action type only."""
     return f"""\
 You are analyzing a potential football foul from {n_views} camera angles.
@@ -581,10 +615,13 @@ Respond with ONLY this JSON:
 {{"action": "<action type>", "reasoning": "<one sentence about the body movement>"}}"""
 
 
-def build_two_stage_severity_prompt(n_views: int, law12_context: str,
-                                     predicted_action: str,
-                                     severity_examples: str,
-                                     severity_priors: dict) -> str:
+def build_two_stage_severity_prompt(
+    n_views: int,
+    law12_context: str,
+    predicted_action: str,
+    severity_examples: str,
+    severity_priors: dict,
+) -> str:
     """Stage 2: given predicted action, predict severity."""
     prior_str = ", ".join(f"{k}: {v}%" for k, v in severity_priors.items())
     return f"""\
@@ -615,8 +652,7 @@ Respond with ONLY this JSON:
 {{"severity": "<severity>", "reasoning": "<one sentence citing force level>"}}"""
 
 
-def build_ragicl_prompt(n_views: int, law12_context: str,
-                         dynamic_examples: str) -> str:
+def build_ragicl_prompt(n_views: int, law12_context: str, dynamic_examples: str) -> str:
     return f"""\
 You are analyzing a potential football foul from {n_views} camera angles.
 View 0 is the live broadcast camera. Views 1+ are replay cameras.
@@ -641,6 +677,7 @@ Respond with ONLY this JSON:
 
 
 # ── Row 4: Chain-of-Shot prompts ──────────────────────────────────────────
+
 
 def build_cos_frame_selection_prompt(n_views: int, frames_per_view: int) -> str:
     """
@@ -675,9 +712,9 @@ Respond with ONLY this JSON (one key per view label, value is the frame index 0-
 {{{", ".join(f'"{label}": <0-{frames_per_view - 1}>' for label in view_labels)}}}"""
 
 
-def build_cos_action_prompt(n_views: int, law12_context: str,
-                             mined_examples: str,
-                             selected_frame_info: str) -> str:
+def build_cos_action_prompt(
+    n_views: int, law12_context: str, mined_examples: str, selected_frame_info: str
+) -> str:
     """Stage 1 of CoS two-stage: classify action using key frames only."""
     return f"""\
 You are analyzing a potential football foul from {n_views} camera angles.
@@ -702,11 +739,14 @@ Respond with ONLY this JSON:
 {{"action": "<action type>", "reasoning": "<one sentence describing the body mechanics visible in the key frame>"}}"""
 
 
-def build_cos_severity_prompt(n_views: int, law12_context: str,
-                               predicted_action: str,
-                               severity_examples: str,
-                               severity_priors: dict,
-                               selected_frame_info: str) -> str:
+def build_cos_severity_prompt(
+    n_views: int,
+    law12_context: str,
+    predicted_action: str,
+    severity_examples: str,
+    severity_priors: dict,
+    selected_frame_info: str,
+) -> str:
     """Stage 2 of CoS two-stage: classify severity given action and key frames."""
     prior_str = ", ".join(f"{k}: {v}%" for k, v in severity_priors.items())
     return f"""\
@@ -746,6 +786,7 @@ Respond with ONLY this JSON:
 # Response parser
 # ---------------------------------------------------------------------------
 
+
 def parse_response(text: str) -> Tuple[int, int]:
     text = re.sub(r"```json\s*|\s*```", "", text).strip()
     match = re.search(r"\{.*\}", text, re.DOTALL)
@@ -763,11 +804,21 @@ def parse_response(text: str) -> Tuple[int, int]:
     s_str = data.get("severity", "")
 
     action_idx = next(
-        (i for i, a in enumerate(ACTION_CLASSES)
-         if a.lower() in a_str.lower() or a_str.lower() in a.lower()), -1)
+        (
+            i
+            for i, a in enumerate(ACTION_CLASSES)
+            if a.lower() in a_str.lower() or a_str.lower() in a.lower()
+        ),
+        -1,
+    )
     severity_idx = next(
-        (i for i, s in enumerate(SEVERITY_CLASSES)
-         if s.lower() in s_str.lower() or s_str.lower() in s.lower()), -1)
+        (
+            i
+            for i, s in enumerate(SEVERITY_CLASSES)
+            if s.lower() in s_str.lower() or s_str.lower() in s.lower()
+        ),
+        -1,
+    )
     return action_idx, severity_idx
 
 
@@ -782,8 +833,13 @@ def parse_action_only(text: str) -> int:
         return -1
     a_str = data.get("action", "")
     return next(
-        (i for i, a in enumerate(ACTION_CLASSES)
-         if a.lower() in a_str.lower() or a_str.lower() in a.lower()), -1)
+        (
+            i
+            for i, a in enumerate(ACTION_CLASSES)
+            if a.lower() in a_str.lower() or a_str.lower() in a.lower()
+        ),
+        -1,
+    )
 
 
 def parse_severity_only(text: str) -> int:
@@ -797,12 +853,16 @@ def parse_severity_only(text: str) -> int:
         return -1
     s_str = data.get("severity", "")
     return next(
-        (i for i, s in enumerate(SEVERITY_CLASSES)
-         if s.lower() in s_str.lower() or s_str.lower() in s.lower()), -1)
+        (
+            i
+            for i, s in enumerate(SEVERITY_CLASSES)
+            if s.lower() in s_str.lower() or s_str.lower() in s.lower()
+        ),
+        -1,
+    )
 
 
-def parse_key_frames(text: str, n_views: int,
-                     frames_per_view: int) -> List[int]:
+def parse_key_frames(text: str, n_views: int, frames_per_view: int) -> List[int]:
     """
     Parse the CoS frame selection response.
     Returns a list of length n_views with selected frame index per view.
@@ -832,9 +892,11 @@ def parse_key_frames(text: str, n_views: int,
     return result
 
 
-def select_key_frames(frames_per_view_list: List[List[Image.Image]],
-                      key_frame_indices: List[int],
-                      context_window: int = 1) -> List[List[Image.Image]]:
+def select_key_frames(
+    frames_per_view_list: List[List[Image.Image]],
+    key_frame_indices: List[int],
+    context_window: int = 1,
+) -> List[List[Image.Image]]:
     """
     For each view, return only the key frame ± context_window adjacent frames.
     context_window=1 means up to 3 frames per view (key-1, key, key+1).
@@ -842,15 +904,18 @@ def select_key_frames(frames_per_view_list: List[List[Image.Image]],
     """
     selected = []
     for v_idx, frames in enumerate(frames_per_view_list):
-        key = key_frame_indices[v_idx] if v_idx < len(key_frame_indices) else len(frames) // 2
+        key = (
+            key_frame_indices[v_idx]
+            if v_idx < len(key_frame_indices)
+            else len(frames) // 2
+        )
         lo = max(0, key - context_window)
         hi = min(len(frames) - 1, key + context_window)
-        selected.append(frames[lo:hi + 1])
+        selected.append(frames[lo : hi + 1])
     return selected
 
 
-def format_selected_frame_info(key_frame_indices: List[int],
-                                n_views: int) -> str:
+def format_selected_frame_info(key_frame_indices: List[int], n_views: int) -> str:
     """Human-readable summary of which frames were selected."""
     view_labels = ["Live camera"] + [f"Replay {i}" for i in range(1, n_views)]
     lines = []
@@ -869,6 +934,7 @@ def format_selected_frame_info(key_frame_indices: List[int],
 # model and only load model weights from the specified model_name.
 QWEN_PROCESSOR_FALLBACK = {
     "Video-R1/Video-R1-7B",
+    "Video-R1/Qwen2.5-VL-7B-COT-SFT",
 }
 QWEN_BASE_PROCESSOR = "Qwen/Qwen2.5-VL-7B-Instruct"
 
@@ -876,29 +942,38 @@ QWEN_BASE_PROCESSOR = "Qwen/Qwen2.5-VL-7B-Instruct"
 class QwenVLBackend:
     def __init__(self, model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct"):
         from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+
         print(f"[QwenVL] Loading {model_name}...")
 
         # Some Qwen2.5-VL finetunes (e.g. Video-R1) ship without a valid
         # preprocessor_config.json — fall back to the base model's processor.
         if model_name in QWEN_PROCESSOR_FALLBACK:
-            print(f"[QwenVL] Processor config missing for {model_name}, "
-                  f"loading processor from {QWEN_BASE_PROCESSOR} instead.")
+            print(
+                f"[QwenVL] Processor config missing for {model_name}, "
+                f"loading processor from {QWEN_BASE_PROCESSOR} instead."
+            )
             processor_source = QWEN_BASE_PROCESSOR
         else:
             processor_source = model_name
 
         self.processor = AutoProcessor.from_pretrained(
-            processor_source, trust_remote_code=True)
+            processor_source, trust_remote_code=True
+        )
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_name, torch_dtype=torch.bfloat16,
-            device_map="cuda", trust_remote_code=True,
+            model_name,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda",
+            trust_remote_code=True,
         )
         self.model.eval()
         print("[QwenVL] Ready.")
 
-    def classify(self, frames_per_view: List[List[Image.Image]],
-                 prompt: str,
-                 extra_images: List[Image.Image] = None) -> str:
+    def classify(
+        self,
+        frames_per_view: List[List[Image.Image]],
+        prompt: str,
+        extra_images: List[Image.Image] = None,
+    ) -> str:
         """
         extra_images: additional PIL images prepended before the main views
                       (used for mined medoid examples in data_driven mode)
@@ -909,7 +984,9 @@ class QwenVLBackend:
 
         # Inject mined example images if provided
         if extra_images:
-            content.append({"type": "text", "text": "[Reference examples from training data:]"})
+            content.append(
+                {"type": "text", "text": "[Reference examples from training data:]"}
+            )
             for img in extra_images:
                 content.append({"type": "image", "image": img})
 
@@ -923,22 +1000,29 @@ class QwenVLBackend:
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": content},
+            {"role": "user", "content": content},
         ]
         text_input = self.processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True)
+            messages, tokenize=False, add_generation_prompt=True
+        )
         img_inputs, vid_inputs = process_vision_info(messages)
         inputs = self.processor(
-            text=[text_input], images=img_inputs, videos=vid_inputs,
-            padding=True, return_tensors="pt",
+            text=[text_input],
+            images=img_inputs,
+            videos=vid_inputs,
+            padding=True,
+            return_tensors="pt",
         ).to("cuda")
 
         with torch.no_grad():
             out = self.model.generate(
-                **inputs, max_new_tokens=512,
-                do_sample=False, temperature=None, top_p=None,
+                **inputs,
+                max_new_tokens=512,
+                do_sample=False,
+                temperature=None,
+                top_p=None,
             )
-        generated = out[:, inputs["input_ids"].shape[1]:]
+        generated = out[:, inputs["input_ids"].shape[1] :]
         return self.processor.batch_decode(generated, skip_special_tokens=True)[0]
 
 
@@ -961,64 +1045,79 @@ PHI4_MODELS = {
 class Phi4VisionBackend:
     """Backend for microsoft/Phi-4-reasoning-vision-15B.
 
-    Key differences from QwenVLBackend:
+    Correct API (from official Microsoft GitHub, requires transformers 4.57.1):
     - Uses AutoModelForCausalLM + AutoProcessor (custom_code architecture)
-    - Images passed as PIL objects directly in message content dicts
-    - Model produces <think>...</think> chain-of-thought before JSON answer
-    - Context window is 16,384 tokens - cap at 2 frames/view
-    - Separator token is <|im_sep|> not <|im_end|>
+    - Images injected as <image> tokens inline in TEXT string (not content dicts)
+    - prompt = processor.tokenizer.apply_chat_template(...)
+    - inputs = processor(text=prompt, images=[pil, ...], return_tensors="pt")
+    - eos_token_id = processor.tokenizer.eos_token_id
+    - dtype= not torch_dtype= (transformers 5.x deprecation)
+    - Model produces <think>...</think> before JSON — stripped before parsing
+    - Context window 16,384 tokens — cap at 2 frames/view
+    - Requires phi4 conda env (transformers 4.57.1):
+      conda activate /net/tscratch/people/plgaszos/conda_envs/phi4
     """
 
-    MAX_FRAMES_PER_VIEW = 2  # 4 views x 2 frames x ~600 tok/img ~ 4800 visual tokens
+    MAX_FRAMES_PER_VIEW = 2  # 4 views x 2 frames x ~750 tok/img ~ 6000 visual tokens
 
     def __init__(self, model_name: str = "microsoft/Phi-4-reasoning-vision-15B"):
         from transformers import AutoModelForCausalLM, AutoProcessor
+
         print(f"[Phi4Vision] Loading {model_name}...")
         self.processor = AutoProcessor.from_pretrained(
-            model_name, trust_remote_code=True)
+            model_name, trust_remote_code=True
+        )
+        self.image_token = getattr(self.processor, "image_token", "<image>")
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             device_map="cuda",
             trust_remote_code=True,
         )
         self.model.eval()
-        print("[Phi4Vision] Ready.")
+        print(f"[Phi4Vision] Ready. image_token={self.image_token!r}")
 
-    def classify(self, frames_per_view: List[List[Image.Image]],
-                 prompt: str,
-                 extra_images: List[Image.Image] = None) -> str:
+    def classify(
+        self,
+        frames_per_view: List[List[Image.Image]],
+        prompt: str,
+        extra_images: List[Image.Image] = None,
+    ) -> str:
 
-        content = []
+        all_images = []
+        user_text = ""
 
+        # Reference examples from medoid cache (if any)
         if extra_images:
-            content.append({"type": "text",
-                             "text": "[Reference examples from training data:]"})
+            user_text += "[Reference examples from training data:]\n"
             for img in extra_images:
-                content.append({"type": "image", "image": img})
+                user_text += f"{self.image_token}\n"
+                all_images.append(img)
 
+        # Multi-view frames — cap at MAX_FRAMES_PER_VIEW per view
+        view_labels = ["Live camera"] + [
+            f"Replay {i}" for i in range(1, len(frames_per_view))
+        ]
         for v_idx, frames in enumerate(frames_per_view):
-            label = "Live camera" if v_idx == 0 else f"Replay {v_idx}"
-            content.append({"type": "text", "text": f"\n[{label}]"})
-            for frame in frames[:self.MAX_FRAMES_PER_VIEW]:
-                content.append({"type": "image", "image": frame})
+            user_text += f"\n[{view_labels[v_idx]}]\n"
+            for frame in frames[: self.MAX_FRAMES_PER_VIEW]:
+                user_text += f"{self.image_token}\n"
+                all_images.append(frame)
 
-        content.append({"type": "text", "text": f"\n\n{prompt}"})
+        user_text += f"\n{prompt}"
 
         messages = [
             {"role": "system", "content": PHI4_SYSTEM_PROMPT},
-            {"role": "user",   "content": content},
+            {"role": "user", "content": user_text.strip()},
         ]
 
-        text_input = self.processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True)
-
-        all_images = list(extra_images) if extra_images else []
-        for frames in frames_per_view:
-            all_images.extend(frames[:self.MAX_FRAMES_PER_VIEW])
+        # Phi-4 uses processor.tokenizer.apply_chat_template (not processor directly)
+        text_prompt = self.processor.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
 
         inputs = self.processor(
-            text=text_input,
+            text=text_prompt,
             images=all_images if all_images else None,
             return_tensors="pt",
         ).to("cuda")
@@ -1027,24 +1126,28 @@ class Phi4VisionBackend:
             out = self.model.generate(
                 **inputs,
                 max_new_tokens=1024,
+                eos_token_id=self.processor.tokenizer.eos_token_id,
                 do_sample=False,
-                temperature=None,
-                top_p=None,
             )
-        generated = out[:, inputs["input_ids"].shape[1]:]
-        raw = self.processor.batch_decode(generated, skip_special_tokens=True)[0]
+        generated = out[:, inputs["input_ids"].shape[1] :]
+        raw = self.processor.tokenizer.decode(generated[0], skip_special_tokens=True)
 
-        # Strip <think>...</think> chain-of-thought — keep only final answer
+        # Strip <think>...</think> chain-of-thought — keep only final JSON answer
         import re as _re
+
         raw_clean = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
-        suffix = (f"\n[COT STRIPPED — original length: {len(raw)} chars]"
-                  if len(raw) > len(raw_clean) + 5 else "")
+        suffix = (
+            f"\n[COT STRIPPED — original length: {len(raw)} chars]"
+            if len(raw) > len(raw_clean) + 5
+            else ""
+        )
         return raw_clean + suffix
 
 
 # ---------------------------------------------------------------------------
 # MViT FAISS retriever (for rag_icl)
 # ---------------------------------------------------------------------------
+
 
 class MViTRetriever:
     TARGET_FRAMES = 16
@@ -1053,6 +1156,7 @@ class MViTRetriever:
     def __init__(self, index_path: str, meta_path: str, device: str = "cuda"):
         import faiss
         from torchvision.models.video import mvit_v2_s, MViT_V2_S_Weights
+
         print("[MViTRetriever] Loading MViT-v2-S + FAISS index...")
         self.device = device
         weights = MViT_V2_S_Weights.DEFAULT
@@ -1106,8 +1210,10 @@ class MViTRetriever:
 # Mined examples builder (for data_driven and two_stage)
 # ---------------------------------------------------------------------------
 
-def build_mined_examples_text(medoid_cache: dict,
-                               n_per_class: int = 1) -> Tuple[str, List[Image.Image]]:
+
+def build_mined_examples_text(
+    medoid_cache: dict, n_per_class: int = 1
+) -> Tuple[str, List[Image.Image]]:
     """
     Build text description + list of PIL images from medoid cache.
     Returns (examples_text, list_of_pil_images).
@@ -1119,7 +1225,7 @@ def build_mined_examples_text(medoid_cache: dict,
     example_images = []
     shown = 0
     for key, entry in sorted(medoid_cache.items()):
-        action   = entry["action"]
+        action = entry["action"]
         severity = entry["severity"]
         frames_b64 = entry["frames_b64"][:n_per_class]
 
@@ -1136,8 +1242,9 @@ def build_mined_examples_text(medoid_cache: dict,
     return examples_text.strip(), example_images
 
 
-def build_severity_examples_for_action(medoid_cache: dict,
-                                        action: str) -> Tuple[str, List[Image.Image]]:
+def build_severity_examples_for_action(
+    medoid_cache: dict, action: str
+) -> Tuple[str, List[Image.Image]]:
     """
     For two-stage stage 2: get all severity examples for a given action.
     """
@@ -1168,9 +1275,9 @@ def build_severity_examples_for_action(medoid_cache: dict,
 # Metrics
 # ---------------------------------------------------------------------------
 
+
 def compute_metrics(y_true_a, y_pred_a, y_true_s, y_pred_s) -> dict:
-    valid = [i for i in range(len(y_pred_a))
-             if y_pred_a[i] != -1 and y_pred_s[i] != -1]
+    valid = [i for i in range(len(y_pred_a)) if y_pred_a[i] != -1 and y_pred_s[i] != -1]
     n_valid = len(valid)
     n_total = len(y_pred_a)
     if n_valid == 0:
@@ -1182,25 +1289,32 @@ def compute_metrics(y_true_a, y_pred_a, y_true_s, y_pred_s) -> dict:
     ys_pred = [y_pred_s[i] for i in valid]
 
     return {
-        "n_total":               n_total,
-        "n_valid":               n_valid,
-        "parse_rate":            n_valid / n_total * 100,
-        "accuracy_action":       accuracy_score(ya_true, ya_pred) * 100,
-        "balanced_acc_action":   balanced_accuracy_score(ya_true, ya_pred) * 100,
-        "accuracy_severity":     accuracy_score(ys_true, ys_pred) * 100,
+        "n_total": n_total,
+        "n_valid": n_valid,
+        "parse_rate": n_valid / n_total * 100,
+        "accuracy_action": accuracy_score(ya_true, ya_pred) * 100,
+        "balanced_acc_action": balanced_accuracy_score(ya_true, ya_pred) * 100,
+        "accuracy_severity": accuracy_score(ys_true, ys_pred) * 100,
         "balanced_acc_severity": balanced_accuracy_score(ys_true, ys_pred) * 100,
-        "leaderboard_value":     (balanced_accuracy_score(ya_true, ya_pred) +
-                                  balanced_accuracy_score(ys_true, ys_pred)) / 2 * 100,
-        "confusion_action":      confusion_matrix(
-            ya_true, ya_pred, labels=list(range(len(ACTION_CLASSES)))).tolist(),
-        "confusion_severity":    confusion_matrix(
-            ys_true, ys_pred, labels=list(range(len(SEVERITY_CLASSES)))).tolist(),
+        "leaderboard_value": (
+            balanced_accuracy_score(ya_true, ya_pred)
+            + balanced_accuracy_score(ys_true, ys_pred)
+        )
+        / 2
+        * 100,
+        "confusion_action": confusion_matrix(
+            ya_true, ya_pred, labels=list(range(len(ACTION_CLASSES)))
+        ).tolist(),
+        "confusion_severity": confusion_matrix(
+            ys_true, ys_pred, labels=list(range(len(SEVERITY_CLASSES)))
+        ).tolist(),
     }
 
 
 # ---------------------------------------------------------------------------
 # Main evaluation loop
 # ---------------------------------------------------------------------------
+
 
 def evaluate(args):
     output_dir = Path(args.output_dir)
@@ -1214,7 +1328,7 @@ def evaluate(args):
     print("Loading annotations...")
     samples = load_annotations(args.annotations)
     if args.max_samples:
-        sample_ids = list(samples.keys())[:args.max_samples]
+        sample_ids = list(samples.keys())[: args.max_samples]
         samples = {k: samples[k] for k in sample_ids}
     print(f"Evaluating on {len(samples)} samples.")
 
@@ -1230,7 +1344,12 @@ def evaluate(args):
 
     # Load medoid cache for data_driven / two_stage / cos_two_stage
     medoid_cache = None
-    if args.strategy in ("data_driven", "two_stage", "cos_two_stage", "hybrid_cos_two_stage"):
+    if args.strategy in (
+        "data_driven",
+        "two_stage",
+        "cos_two_stage",
+        "hybrid_cos_two_stage",
+    ):
         if not args.medoid_cache or not Path(args.medoid_cache).exists():
             raise FileNotFoundError(
                 f"Medoid cache not found: {args.medoid_cache}\n"
@@ -1244,13 +1363,16 @@ def evaluate(args):
     mined_example_images = None
     if args.strategy == "data_driven" and medoid_cache:
         mined_examples_text, mined_example_images = build_mined_examples_text(
-            medoid_cache, n_per_class=1)
+            medoid_cache, n_per_class=1
+        )
 
     # FAISS retriever (rag_icl)
     retriever = None
     if args.strategy == "rag_icl":
         if not args.faiss_index_path or not args.faiss_meta_path:
-            raise ValueError("rag_icl requires --faiss_index_path and --faiss_meta_path")
+            raise ValueError(
+                "rag_icl requires --faiss_index_path and --faiss_meta_path"
+            )
         retriever = MViTRetriever(args.faiss_index_path, args.faiss_meta_path)
 
     # Primary VLM backend — auto-select based on model name
@@ -1260,7 +1382,10 @@ def evaluate(args):
         backend = QwenVLBackend(model_name=args.model_name)
 
     # Selector backend for hybrid_cos_two_stage Stage 0 frame selection
-    if getattr(args, "selector_model_name", None) and args.selector_model_name != args.model_name:
+    if (
+        getattr(args, "selector_model_name", None)
+        and args.selector_model_name != args.model_name
+    ):
         print(f"[Hybrid] Loading selector: {args.selector_model_name}")
         selector_backend = QwenVLBackend(model_name=args.selector_model_name)
         print("[Hybrid] Selector ready.")
@@ -1280,14 +1405,17 @@ def evaluate(args):
             frames_per_view_list = []
             for clip_raw in sample["clips"][:4]:
                 clip_key = clip_raw.replace(".mp4", "")
-                frames = extract_keyframes(hdf5, action_key, clip_key,
-                                           n_frames=args.frames_per_view)
+                frames = extract_keyframes(
+                    hdf5, action_key, clip_key, n_frames=args.frames_per_view
+                )
                 if frames:
                     frames_per_view_list.append(frames)
 
             if not frames_per_view_list:
-                y_true_a.append(sample["action"]); y_pred_a.append(-1)
-                y_true_s.append(sample["severity"]); y_pred_s.append(-1)
+                y_true_a.append(sample["action"])
+                y_pred_a.append(-1)
+                y_true_s.append(sample["severity"])
+                y_pred_s.append(-1)
                 continue
 
             action_hint = ACTION_CLASSES[sample["action"]]  # used for RAG query
@@ -1312,7 +1440,8 @@ def evaluate(args):
                         severity_priors=severity_priors,
                     )
                     raw = backend.classify(
-                        frames_per_view_list, prompt,
+                        frames_per_view_list,
+                        prompt,
                         extra_images=mined_example_images,
                     )
                     act_idx, sev_idx = parse_response(raw)
@@ -1321,14 +1450,16 @@ def evaluate(args):
                 elif args.strategy == "two_stage":
                     # Stage 1: predict action
                     all_mined_text, all_mined_imgs = build_mined_examples_text(
-                        medoid_cache, n_per_class=1)
+                        medoid_cache, n_per_class=1
+                    )
                     stage1_prompt = build_two_stage_action_prompt(
                         n_views=len(frames_per_view_list),
                         law12_context=law12_ctx,
                         mined_examples=all_mined_text,
                     )
                     raw_stage1 = backend.classify(
-                        frames_per_view_list, stage1_prompt,
+                        frames_per_view_list,
+                        stage1_prompt,
                         extra_images=all_mined_imgs,
                     )
                     act_idx = parse_action_only(raw_stage1)
@@ -1338,8 +1469,11 @@ def evaluate(args):
                         act_idx_str = ACTION_CLASSES[act_idx]
 
                     # Stage 2: predict severity conditioned on action
-                    sev_examples_text, sev_example_imgs = build_severity_examples_for_action(
-                        medoid_cache, action=act_idx_str)
+                    sev_examples_text, sev_example_imgs = (
+                        build_severity_examples_for_action(
+                            medoid_cache, action=act_idx_str
+                        )
+                    )
                     stage2_law12 = rag.retrieve(rag.build_query(act_idx_str))
                     stage2_prompt = build_two_stage_severity_prompt(
                         n_views=len(frames_per_view_list),
@@ -1349,7 +1483,8 @@ def evaluate(args):
                         severity_priors=severity_priors,
                     )
                     raw_stage2 = backend.classify(
-                        frames_per_view_list, stage2_prompt,
+                        frames_per_view_list,
+                        stage2_prompt,
                         extra_images=sev_example_imgs if sev_example_imgs else None,
                     )
                     sev_idx = parse_severity_only(raw_stage2)
@@ -1358,7 +1493,8 @@ def evaluate(args):
                 # ── Row 3: rag_icl ────────────────────────────────────────
                 elif args.strategy == "rag_icl":
                     dynamic_examples = retriever.retrieve(
-                        frames_per_view_list[0], k=args.retrieval_k)
+                        frames_per_view_list[0], k=args.retrieval_k
+                    )
                     prompt = build_ragicl_prompt(
                         n_views=len(frames_per_view_list),
                         law12_context=law12_ctx,
@@ -1376,8 +1512,9 @@ def evaluate(args):
                         n_views=n_views,
                         frames_per_view=args.frames_per_view,
                     )
-                    raw_stage0 = backend.classify(frames_per_view_list,
-                                                  cos_select_prompt)
+                    raw_stage0 = backend.classify(
+                        frames_per_view_list, cos_select_prompt
+                    )
                     key_indices = parse_key_frames(
                         raw_stage0,
                         n_views=n_views,
@@ -1386,12 +1523,14 @@ def evaluate(args):
 
                     # Extract key-frame subsets (key frame ± 1 adjacent frame)
                     key_frames_list = select_key_frames(
-                        frames_per_view_list, key_indices, context_window=1)
+                        frames_per_view_list, key_indices, context_window=1
+                    )
                     selected_info = format_selected_frame_info(key_indices, n_views)
 
                     # Stage 1: classify action using key frames
                     all_mined_text, all_mined_imgs = build_mined_examples_text(
-                        medoid_cache, n_per_class=1)
+                        medoid_cache, n_per_class=1
+                    )
                     stage1_prompt = build_cos_action_prompt(
                         n_views=n_views,
                         law12_context=law12_ctx,
@@ -1399,15 +1538,21 @@ def evaluate(args):
                         selected_frame_info=selected_info,
                     )
                     raw_stage1 = backend.classify(
-                        key_frames_list, stage1_prompt,
+                        key_frames_list,
+                        stage1_prompt,
                         extra_images=all_mined_imgs,
                     )
                     act_idx = parse_action_only(raw_stage1)
-                    act_idx_str = ACTION_CLASSES[act_idx] if act_idx != -1 else "Dont know"
+                    act_idx_str = (
+                        ACTION_CLASSES[act_idx] if act_idx != -1 else "Dont know"
+                    )
 
                     # Stage 2: classify severity using key frames + action context
-                    sev_examples_text, sev_example_imgs = build_severity_examples_for_action(
-                        medoid_cache, action=act_idx_str)
+                    sev_examples_text, sev_example_imgs = (
+                        build_severity_examples_for_action(
+                            medoid_cache, action=act_idx_str
+                        )
+                    )
                     stage2_law12 = rag.retrieve(rag.build_query(act_idx_str))
                     stage2_prompt = build_cos_severity_prompt(
                         n_views=n_views,
@@ -1418,14 +1563,17 @@ def evaluate(args):
                         selected_frame_info=selected_info,
                     )
                     raw_stage2 = backend.classify(
-                        key_frames_list, stage2_prompt,
+                        key_frames_list,
+                        stage2_prompt,
                         extra_images=sev_example_imgs if sev_example_imgs else None,
                     )
                     sev_idx = parse_severity_only(raw_stage2)
-                    raw = (f"STAGE0 (key frames): {raw_stage0}\n"
-                           f"Selected: {selected_info}\n"
-                           f"STAGE1 (action): {raw_stage1}\n"
-                           f"STAGE2 (severity): {raw_stage2}")
+                    raw = (
+                        f"STAGE0 (key frames): {raw_stage0}\n"
+                        f"Selected: {selected_info}\n"
+                        f"STAGE1 (action): {raw_stage1}\n"
+                        f"STAGE2 (severity): {raw_stage2}"
+                    )
 
                 # ── Row 5: hybrid_cos_two_stage ──────────────────────────────
                 # Stage 0: Qwen (selector) picks key frames — good at JSON output
@@ -1435,48 +1583,69 @@ def evaluate(args):
 
                     # Stage 0: frame selection via SELECTOR backend
                     cos_select_prompt = build_cos_frame_selection_prompt(
-                        n_views=n_views, frames_per_view=args.frames_per_view)
+                        n_views=n_views, frames_per_view=args.frames_per_view
+                    )
                     raw_stage0 = selector_backend.classify(
-                        frames_per_view_list, cos_select_prompt)
+                        frames_per_view_list, cos_select_prompt
+                    )
                     key_indices = parse_key_frames(
-                        raw_stage0, n_views=n_views,
-                        frames_per_view=args.frames_per_view)
+                        raw_stage0,
+                        n_views=n_views,
+                        frames_per_view=args.frames_per_view,
+                    )
                     key_frames_list = select_key_frames(
-                        frames_per_view_list, key_indices, context_window=1)
+                        frames_per_view_list, key_indices, context_window=1
+                    )
                     selected_info = format_selected_frame_info(key_indices, n_views)
 
                     # Stage 1: action classification via PRIMARY backend
                     all_mined_text, all_mined_imgs = build_mined_examples_text(
-                        medoid_cache, n_per_class=1)
+                        medoid_cache, n_per_class=1
+                    )
                     stage1_prompt = build_cos_action_prompt(
-                        n_views=n_views, law12_context=law12_ctx,
+                        n_views=n_views,
+                        law12_context=law12_ctx,
                         mined_examples=all_mined_text,
-                        selected_frame_info=selected_info)
+                        selected_frame_info=selected_info,
+                    )
                     raw_stage1 = backend.classify(
-                        key_frames_list, stage1_prompt,
-                        extra_images=all_mined_imgs)
+                        key_frames_list, stage1_prompt, extra_images=all_mined_imgs
+                    )
                     act_idx = parse_action_only(raw_stage1)
-                    act_idx_str = ACTION_CLASSES[act_idx] if act_idx != -1 else "Dont know"
+                    act_idx_str = (
+                        ACTION_CLASSES[act_idx] if act_idx != -1 else "Dont know"
+                    )
 
                     # Stage 2: severity classification via PRIMARY backend
-                    sev_examples_text, sev_example_imgs = build_severity_examples_for_action(
-                        medoid_cache, action=act_idx_str)
+                    sev_examples_text, sev_example_imgs = (
+                        build_severity_examples_for_action(
+                            medoid_cache, action=act_idx_str
+                        )
+                    )
                     stage2_law12 = rag.retrieve(rag.build_query(act_idx_str))
                     stage2_prompt = build_cos_severity_prompt(
-                        n_views=n_views, law12_context=stage2_law12,
+                        n_views=n_views,
+                        law12_context=stage2_law12,
                         predicted_action=act_idx_str,
                         severity_examples=sev_examples_text,
                         severity_priors=severity_priors,
-                        selected_frame_info=selected_info)
+                        selected_frame_info=selected_info,
+                    )
                     raw_stage2 = backend.classify(
-                        key_frames_list, stage2_prompt,
-                        extra_images=sev_example_imgs if sev_example_imgs else None)
+                        key_frames_list,
+                        stage2_prompt,
+                        extra_images=sev_example_imgs if sev_example_imgs else None,
+                    )
                     sev_idx = parse_severity_only(raw_stage2)
-                    sel_name = getattr(args, "selector_model_name", None) or args.model_name
-                    raw = (f"STAGE0 (selector={sel_name}): {raw_stage0}\n"
-                           f"Selected: {selected_info}\n"
-                           f"STAGE1 (primary={args.model_name}): {raw_stage1}\n"
-                           f"STAGE2 (primary={args.model_name}): {raw_stage2}")
+                    sel_name = (
+                        getattr(args, "selector_model_name", None) or args.model_name
+                    )
+                    raw = (
+                        f"STAGE0 (selector={sel_name}): {raw_stage0}\n"
+                        f"Selected: {selected_info}\n"
+                        f"STAGE1 (primary={args.model_name}): {raw_stage1}\n"
+                        f"STAGE2 (primary={args.model_name}): {raw_stage2}"
+                    )
 
                 else:
                     raise ValueError(f"Unknown strategy: {args.strategy}")
@@ -1485,14 +1654,16 @@ def evaluate(args):
                 print(f"  Error on {action_id}: {e}")
                 act_idx, sev_idx, raw = -1, -1, str(e)
 
-            y_true_a.append(sample["action"]); y_pred_a.append(act_idx)
-            y_true_s.append(sample["severity"]); y_pred_s.append(sev_idx)
+            y_true_a.append(sample["action"])
+            y_pred_a.append(act_idx)
+            y_true_s.append(sample["severity"])
+            y_pred_s.append(sev_idx)
             predictions[action_id] = {
-                "true_action":   sample["action"],
-                "pred_action":   act_idx,
+                "true_action": sample["action"],
+                "pred_action": act_idx,
                 "true_severity": sample["severity"],
                 "pred_severity": sev_idx,
-                "raw_response":  raw,
+                "raw_response": raw,
             }
 
     metrics = compute_metrics(y_true_a, y_pred_a, y_true_s, y_pred_s)
@@ -1504,8 +1675,11 @@ def evaluate(args):
         json.dump(metrics, f, indent=2)
 
     # Summary (no predictions)
-    summary = {k: v for k, v in metrics.items()
-               if k not in ("predictions", "confusion_action", "confusion_severity")}
+    summary = {
+        k: v
+        for k, v in metrics.items()
+        if k not in ("predictions", "confusion_action", "confusion_severity")
+    }
     with open(output_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2)
 
@@ -1525,6 +1699,7 @@ def evaluate(args):
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="VLM foul classification ablation script",
@@ -1533,60 +1708,96 @@ def main():
     )
 
     # ── Mode ──────────────────────────────────────────────────────────────
-    parser.add_argument("--build_medoid_cache", action="store_true",
+    parser.add_argument(
+        "--build_medoid_cache",
+        action="store_true",
         help="Build medoid cache from training data and exit. "
-             "Run once before using data_driven/two_stage strategies.")
+        "Run once before using data_driven/two_stage strategies.",
+    )
 
     # ── Strategy ─────────────────────────────────────────────────────────
-    parser.add_argument("--strategy",
-        choices=["static_few_shot", "data_driven", "two_stage", "rag_icl",
-                 "cos_two_stage", "hybrid_cos_two_stage"],
+    parser.add_argument(
+        "--strategy",
+        choices=[
+            "static_few_shot",
+            "data_driven",
+            "two_stage",
+            "rag_icl",
+            "cos_two_stage",
+            "hybrid_cos_two_stage",
+        ],
         default="static_few_shot",
-        help="Ablation row to evaluate.")
+        help="Ablation row to evaluate.",
+    )
 
     # ── Data paths ───────────────────────────────────────────────────────
-    parser.add_argument("--hdf5_path",
-        help="Path to eval HDF5 (Valid.hdf5 or Test.hdf5)")
-    parser.add_argument("--annotations",
-        help="Path to eval annotations.json")
-    parser.add_argument("--train_hdf5",
-        help="Path to Train.hdf5 (needed for medoid cache building)")
-    parser.add_argument("--train_annotations",
-        help="Path to Train/annotations.json (needed for priors + medoid cache)")
-    parser.add_argument("--law12_pdf",
+    parser.add_argument(
+        "--hdf5_path", help="Path to eval HDF5 (Valid.hdf5 or Test.hdf5)"
+    )
+    parser.add_argument("--annotations", help="Path to eval annotations.json")
+    parser.add_argument(
+        "--train_hdf5", help="Path to Train.hdf5 (needed for medoid cache building)"
+    )
+    parser.add_argument(
+        "--train_annotations",
+        help="Path to Train/annotations.json (needed for priors + medoid cache)",
+    )
+    parser.add_argument(
+        "--law12_pdf",
         default=None,
-        help="Path to FIFA Laws PDF (Law 12). Uses hardcoded fallback if omitted.")
+        help="Path to FIFA Laws PDF (Law 12). Uses hardcoded fallback if omitted.",
+    )
 
     # ── FAISS / medoid ────────────────────────────────────────────────────
-    parser.add_argument("--faiss_index_path", default=None,
-        help="Path to FAISS index (required for data_driven, two_stage, rag_icl)")
-    parser.add_argument("--faiss_meta_path", default=None,
-        help="Path to FAISS metadata JSON")
-    parser.add_argument("--medoid_cache",
+    parser.add_argument(
+        "--faiss_index_path",
+        default=None,
+        help="Path to FAISS index (required for data_driven, two_stage, rag_icl)",
+    )
+    parser.add_argument(
+        "--faiss_meta_path", default=None, help="Path to FAISS metadata JSON"
+    )
+    parser.add_argument(
+        "--medoid_cache",
         default="/net/tscratch/people/plgaszos/vlm_rag_icl/medoid_cache.json",
-        help="Path to medoid cache JSON (built with --build_medoid_cache)")
+        help="Path to medoid cache JSON (built with --build_medoid_cache)",
+    )
 
     # ── Model ────────────────────────────────────────────────────────────
     parser.add_argument("--model_name", default="Qwen/Qwen2.5-VL-7B-Instruct")
     parser.add_argument("--frames_per_view", type=int, default=4)
-    parser.add_argument("--retrieval_k", type=int, default=3,
-        help="Number of examples to retrieve for rag_icl")
-    parser.add_argument("--selector_model_name", default=None,
+    parser.add_argument(
+        "--retrieval_k",
+        type=int,
+        default=3,
+        help="Number of examples to retrieve for rag_icl",
+    )
+    parser.add_argument(
+        "--selector_model_name",
+        default=None,
         help="Model for Stage 0 in hybrid_cos_two_stage. "
-             "Defaults to --model_name. "
-             "Example: --selector_model_name Qwen/Qwen2.5-VL-7B-Instruct")
+        "Defaults to --model_name. "
+        "Example: --selector_model_name Qwen/Qwen2.5-VL-7B-Instruct",
+    )
 
     # ── Output ───────────────────────────────────────────────────────────
     parser.add_argument("--output_dir", default="ablation_results/output")
-    parser.add_argument("--max_samples", type=int, default=None,
-        help="Limit samples for quick testing")
+    parser.add_argument(
+        "--max_samples", type=int, default=None, help="Limit samples for quick testing"
+    )
 
     args = parser.parse_args()
 
     # ── Medoid cache build mode ───────────────────────────────────────────
     if args.build_medoid_cache:
-        if not all([args.train_hdf5, args.train_annotations,
-                    args.faiss_index_path, args.faiss_meta_path]):
+        if not all(
+            [
+                args.train_hdf5,
+                args.train_annotations,
+                args.faiss_index_path,
+                args.faiss_meta_path,
+            ]
+        ):
             parser.error(
                 "--build_medoid_cache requires: "
                 "--train_hdf5, --train_annotations, "
