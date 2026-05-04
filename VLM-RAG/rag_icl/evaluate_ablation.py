@@ -1021,6 +1021,7 @@ class QwenVLBackend:
                 do_sample=False,
                 temperature=None,
                 top_p=None,
+		repetition_penalty=1.1,
             )
         generated = out[:, inputs["input_ids"].shape[1] :]
         return self.processor.batch_decode(generated, skip_special_tokens=True)[0]
