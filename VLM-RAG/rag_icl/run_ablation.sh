@@ -28,6 +28,10 @@
 #   sbatch run_ablation.sh static_few_shot "" Video-R1/Video-R1-7B ablation_results/video_r1_static_few_shot
 #   sbatch run_ablation.sh cos_two_stage   "" Video-R1/Video-R1-7B ablation_results/video_r1_cos_two_stage
 #
+#   # Hybrid: Qwen selects frames, COT-SFT classifies
+#   sbatch run_ablation.sh hybrid_cos_two_stage 50 Video-R1/Qwen2.5-VL-7B-COT-SFT ablation_results/hybrid_cot_50 Qwen/Qwen2.5-VL-7B-Instruct
+#   sbatch run_ablation.sh hybrid_cos_two_stage "" Video-R1/Qwen2.5-VL-7B-COT-SFT ablation_results/hybrid_cot_full Qwen/Qwen2.5-VL-7B-Instruct
+#
 #   # Model comparison smoke tests
 #   sbatch run_ablation.sh static_few_shot 50 Video-R1/Video-R1-7B ablation_results/video_r1_static_few_shot_50
 #   sbatch run_ablation.sh cos_two_stage   50 Video-R1/Video-R1-7B ablation_results/video_r1_cos_two_stage_50
@@ -58,6 +62,7 @@ STRATEGY="${1:-static_few_shot}"
 MAX_SAMPLES="${2:-}"
 MODEL_NAME="${3:-Qwen/Qwen2.5-VL-7B-Instruct}"
 OUTPUT_DIR="${4:-ablation_results/${STRATEGY}}"
+SELECTOR_MODEL="${5:-}"  # optional: model for frame selection in hybrid_cos_two_stage
 
 DATA_ROOT="/net/tscratch/people/plgaszos/SoccerNet_Data"
 HDF5_ROOT="/net/tscratch/people/plgaszos/SoccerNet_HDF5"
@@ -111,6 +116,10 @@ COMMON_ARGS=(
     --retrieval_k       3
     --output_dir        "$OUTPUT_DIR"
 )
+
+if [ -n "$SELECTOR_MODEL" ]; then
+    COMMON_ARGS+=(--selector_model_name "$SELECTOR_MODEL")
+fi
 
 if [ -n "$MAX_SAMPLES" ]; then
     COMMON_ARGS+=(--max_samples "$MAX_SAMPLES")
