@@ -1,4 +1,4 @@
-from .qwen import QwenVLBackend, PROCESSOR_FALLBACK, BASE_PROCESSOR
+from .qwen import QwenVLBackend\nfrom .qwen_video import QwenVideoBackend, PROCESSOR_FALLBACK, BASE_PROCESSOR
 
 PHI4_MODELS     = {"microsoft/Phi-4-reasoning-vision-15B"}
 INTERNVL_MODELS = {"OpenGVLab/InternVL3-8B", "OpenGVLab/InternVL3-14B"}
@@ -8,7 +8,9 @@ QWEN35_MODELS   = {"Qwen/Qwen3.5-9B"}
 
 
 def get_backend(model_name: str, enable_thinking: bool = False):
-    if model_name in PHI4_MODELS:
+        if '-Video' in model_name:
+        clean_name = model_name.replace('-Video', '')
+        return QwenVideoBackend(model_name=clean_name)\n\n    if model_name in PHI4_MODELS:
         from .phi4 import Phi4VisionBackend
         return Phi4VisionBackend(model_name=model_name)
     if model_name in INTERNVL_MODELS:
