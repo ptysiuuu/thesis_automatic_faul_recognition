@@ -336,3 +336,16 @@ Respond with ONLY this JSON:
 
 # ── NEW Row 9: Best combined system ──────────────────────────────────────────
 COS_FULL_SEV_TMPL = FULL_FRAME_SEVERITY_TMPL  # reuses full-frame severity for stage 2
+
+
+# ── NEW Row 10: Disambiguation prompt ────────────────────────────────────────
+# Addresses the Elbowing collapse: Standing tackling / Holding / Pushing all
+# predicted as Elbowing due to visual similarity in upper body contact frames.
+ACTION_DISAMBIGUATION = """\
+CRITICAL DISTINCTIONS (common misclassifications to avoid):
+- ELBOWING: arm/elbow strikes opponent's HEAD or FACE. Ball irrelevant.
+- HOLDING: player grabs opponent's SHIRT, ARM or BODY to impede movement. No strike.
+- PUSHING: player uses HANDS or BODY to shove opponent sideways or forward. No grab.
+- STANDING TACKLING: player attempts to win the BALL with their FOOT while standing.
+- TACKLING: player SLIDES or lunges to win the BALL with their foot.
+Do NOT classify as Elbowing unless the elbow clearly strikes the opponent's upper body/head."""

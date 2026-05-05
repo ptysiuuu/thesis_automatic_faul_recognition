@@ -174,3 +174,22 @@ def build_ordinal_severity_prompt(n_views: int, law12_context: str,
         predicted_action=predicted_action, severity_examples=severity_examples,
         prior_str=_prior_str(severity_priors), severity_list=SEVERITY_LIST_STR,
     )
+
+
+# ── NEW Row 10: cos_disambig ──────────────────────────────────────────────────
+def build_cos_action_disambig_prompt(n_views: int, law12_context: str,
+                                      mined_examples: str,
+                                      selected_frame_info: str) -> str:
+    """
+    CoS action prompt with explicit disambiguation of Elbowing vs Holding/Pushing.
+    Addresses the confusion matrix collapse where 131/132 Standing tackling
+    and 46/50 Holding are predicted as Elbowing.
+    """
+    from .templates import ACTION_DISAMBIGUATION
+    return COS_ACTION_TMPL.format(
+        n_views=n_views,
+        law12_context=law12_context + "\n\n" + ACTION_DISAMBIGUATION,
+        mined_examples=mined_examples,
+        selected_frame_info=selected_frame_info,
+        action_list=ACTION_LIST_STR,
+    )
