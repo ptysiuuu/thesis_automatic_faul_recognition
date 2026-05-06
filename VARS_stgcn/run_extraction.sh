@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=06:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=VARS_extract_skeletons_%x_%j.out
 
 # Ścieżki
