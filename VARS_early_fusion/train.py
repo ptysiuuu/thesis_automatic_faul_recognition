@@ -7,7 +7,14 @@ import gc
 import copy
 from config.classes import INVERSE_EVENT_DICTIONARY
 import json
-from SoccerNet.Evaluation.MV_FoulRecognition import evaluate
+import io, contextlib
+from SoccerNet.Evaluation.MV_FoulRecognition import evaluate as _sn_evaluate
+
+def evaluate(ann_path, pred_file):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        result = _sn_evaluate(ann_path, pred_file)
+    return result
 from tqdm import tqdm
 
 # ---------------------------------------------------------------------------
@@ -456,11 +463,13 @@ def _train_epoch(
                     out_try_to_play,
                     out_handball,
                 ) = _run_with_tta(model, mvclips, text_emb=text_emb)
+                attention = None
             else:
                 full_out = model(mvclips, text_emb=text_emb)
                 out_sev, out_act = full_out[0], full_out[1]
                 out_contact, out_bodypart = full_out[2], full_out[3]
                 out_try_to_play, out_handball = full_out[4], full_out[5]
+                attention = full_out[6]
 
             if train and n_batches % 100 == 0:
                 mvnet = getattr(model, "mvnetwork", None)
