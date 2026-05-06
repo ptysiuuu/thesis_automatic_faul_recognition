@@ -54,6 +54,25 @@ class VideoMAETransform:
         return x
 
 
+class TAdaFormerTransform:
+    """CLIP normalisation used by TAdaFormer pretraining."""
+
+    def __init__(self, size: int = 224):
+        self.resize = transforms.Resize(size, antialias=True)
+        self.crop = transforms.CenterCrop(size)
+        self.normalize = transforms.Normalize(
+            mean=[0.48145466, 0.4578275, 0.40821073],
+            std=[0.26862954, 0.26130258, 0.27577711],
+        )
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [T, C, H, W] in [0, 1]
+        x = self.resize(x)
+        x = self.crop(x)
+        x = self.normalize(x)
+        return x
+
+
 # ---------------------------------------------------------------------------
 # Argument validation
 # ---------------------------------------------------------------------------
@@ -192,6 +211,7 @@ def main(args):
         "mvit_v2_s": MViT_V2_S_Weights.KINETICS400_V1.transforms(),
         "mvit_v1_b": MViT_V1_B_Weights.KINETICS400_V1.transforms(),
         **{k: _videomae_transform for k in HF_VIDEOMAE_REGISTRY},
+        "tadaformer_b16": TAdaFormerTransform(size=224),
     }
     # Early fusion always uses MViT-v2-S weights transforms (backbone is hardcoded).
     transforms_model = (
