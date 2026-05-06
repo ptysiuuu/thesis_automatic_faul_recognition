@@ -6,14 +6,20 @@ from config.classes import INVERSE_EVENT_DICTIONARY
 import json
 from SoccerNet.Evaluation.MV_FoulRecognition import evaluate
 from tqdm import tqdm
+
 # Importujemy nową funkcję z pliku rules.py
 from rules import rule_loss_with_stats
 
-def _decode_predictions(preds_sev, preds_act, actions, action_ids):
-    """Wspólna logika dekodowania predykcji dla batcha."""
+
+def _decode_predictions(
+    preds_sev, preds_act, actions, action_ids, sev_probs=None, act_probs=None
+):
+    """Wspolna logika dekodowania predykcji dla batcha."""
     for i in range(len(action_ids)):
         values = {}
-        values["Action class"] = INVERSE_EVENT_DICTIONARY["action_class"][preds_act[i].item()]
+        values["Action class"] = INVERSE_EVENT_DICTIONARY["action_class"][
+            preds_act[i].item()
+        ]
         sev = preds_sev[i].item()
         if sev == 0:
             values["Offence"] = "No offence"
@@ -27,23 +33,43 @@ def _decode_predictions(preds_sev, preds_act, actions, action_ids):
         elif sev == 3:
             values["Offence"] = "Offence"
             values["Severity"] = "5.0"
+        if sev_probs is not None:
+            values["sev_logits"] = sev_probs[i].tolist()
+        if act_probs is not None:
+            values["act_logits"] = act_probs[i].tolist()
         actions[action_ids[i]] = values
 
 
-def trainer(train_loader,
-            val_loader2,
-            test_loader2,
-            model,
-            optimizer,
-            scheduler,
-            criterion,
-            best_model_path,
-            epoch_start,
-            model_name,
-            path_dataset,
-            max_epochs=1000,
-            patience=8
-            ):
+def _compute_probs(outputs_offence_severity, outputs_action):
+    out_sev = outputs_offence_severity.detach()
+    out_act = outputs_action.detach()
+    if out_sev.dim() == 1:
+        out_sev = out_sev.unsqueeze(0)
+    if out_act.dim() == 1:
+        out_act = out_act.unsqueeze(0)
+    if out_sev.size(1) == 3:
+        sev_probs = torch.sigmoid(out_sev)
+    else:
+        sev_probs = torch.softmax(out_sev, dim=1)
+    act_probs = torch.softmax(out_act, dim=1)
+    return sev_probs.cpu(), act_probs.cpu()
+
+
+def trainer(
+    train_loader,
+    val_loader2,
+    test_loader2,
+    model,
+    optimizer,
+    scheduler,
+    criterion,
+    best_model_path,
+    epoch_start,
+    model_name,
+    path_dataset,
+    max_epochs=1000,
+    patience=8,
+):
 
     logging.info("start training")
     counter = 0
@@ -54,10 +80,14 @@ def trainer(train_loader,
         if epoch == 5:
             backbone_params = []
             for name, param in model.named_parameters():
-                if "aggregation_model" not in name and "fc_" not in name and "inter" not in name:
+                if (
+                    "aggregation_model" not in name
+                    and "fc_" not in name
+                    and "inter" not in name
+                ):
                     param.requires_grad = True
                     backbone_params.append(param)
-            optimizer.add_param_group({'params': backbone_params, 'lr': 1e-5})
+            optimizer.add_param_group({"params": backbone_params, "lr": 1e-5})
             logging.info("Backbone unfrozen at epoch 10")
 
         print(f"\nEpoch {epoch+1}/{max_epochs}")
@@ -77,7 +107,9 @@ def trainer(train_loader,
             pbar=pbar,
         )
 
-        results = evaluate(os.path.join(path_dataset, "Train", "annotations.json"), prediction_file)
+        results = evaluate(
+            os.path.join(path_dataset, "Train", "annotations.json"), prediction_file
+        )
         print("TRAINING RESULTS")
         print(results)
 
@@ -90,29 +122,33 @@ def trainer(train_loader,
             epoch + 1,
             model_name,
             train=False,
-            set_name="valid"
+            set_name="valid",
         )
 
-        results = evaluate(os.path.join(path_dataset, "Valid", "annotations.json"), prediction_file)
+        results = evaluate(
+            os.path.join(path_dataset, "Valid", "annotations.json"), prediction_file
+        )
         print("VALIDATION RESULTS")
         print(results)
 
         # Early stopping logic
-        val_leaderboard = results.get('leaderboard_value', 0)
+        val_leaderboard = results.get("leaderboard_value", 0)
         if val_leaderboard > best_val:
             best_val = val_leaderboard
             no_improve = 0
             best_state = {
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'scheduler': scheduler.state_dict()
+                "epoch": epoch + 1,
+                "state_dict": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict(),
             }
             torch.save(best_state, os.path.join(best_model_path, "best_model.pth.tar"))
         else:
             no_improve += 1
             if no_improve >= patience:
-                logging.info(f"Early stopping at epoch {epoch+1}, best valid LB: {best_val:.2f}")
+                logging.info(
+                    f"Early stopping at epoch {epoch+1}, best valid LB: {best_val:.2f}"
+                )
                 break
 
         ###################### TEST ###################
@@ -127,7 +163,9 @@ def trainer(train_loader,
             set_name="test",
         )
 
-        results = evaluate(os.path.join(path_dataset, "Test", "annotations.json"), prediction_file)
+        results = evaluate(
+            os.path.join(path_dataset, "Test", "annotations.json"), prediction_file
+        )
         print("TEST RESULTS")
         print(results)
 
@@ -136,29 +174,30 @@ def trainer(train_loader,
 
         # Zapisywanie checkpointów co epokę
         state = {
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'scheduler': scheduler.state_dict()
+            "epoch": epoch + 1,
+            "state_dict": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(),
         }
         path_aux = os.path.join(best_model_path, str(epoch + 1) + "_model.pth.tar")
         torch.save(state, path_aux)
 
-    if 'pbar' in locals():
+    if "pbar" in locals():
         pbar.close()
     return
 
 
-def train(dataloader,
-          model,
-          criterion,
-          optimizer,
-          epoch,
-          model_name,
-          train=False,
-          set_name="train",
-          pbar=None,
-          ):
+def train(
+    dataloader,
+    model,
+    criterion,
+    optimizer,
+    epoch,
+    model_name,
+    train=False,
+    set_name="train",
+    pbar=None,
+):
 
     if train:
         model.train()
@@ -170,7 +209,7 @@ def train(dataloader,
     total_loss = 0
 
     # Inicjalizacja statystyk reguł dla epoki
-    epoch_rule_stats = {'R1': 0, 'R2_3': 0, 'R5': 0}
+    epoch_rule_stats = {"R1": 0, "R2_3": 0, "R5": 0}
 
     if not os.path.isdir(model_name):
         os.mkdir(model_name)
@@ -194,7 +233,8 @@ def train(dataloader,
         # Dekodowanie predykcji
         preds_sev = torch.argmax(outputs_offence_severity.detach().cpu(), dim=1)
         preds_act = torch.argmax(outputs_action.detach().cpu(), dim=1)
-        _decode_predictions(preds_sev, preds_act, actions, action)
+        sev_probs, act_probs = _compute_probs(outputs_offence_severity, outputs_action)
+        _decode_predictions(preds_sev, preds_act, actions, action, sev_probs, act_probs)
 
         # Zabezpieczenie przed wymiarami przy batch_size=1
         if outputs_offence_severity.dim() == 1:
@@ -203,17 +243,21 @@ def train(dataloader,
             outputs_action = outputs_action.unsqueeze(0)
 
         # Obliczanie podstawowego loss
-        loss_offence_severity = criterion[0](outputs_offence_severity, targets_offence_severity)
+        loss_offence_severity = criterion[0](
+            outputs_offence_severity, targets_offence_severity
+        )
         loss_action = criterion[1](outputs_action, targets_action)
         loss = loss_offence_severity + loss_action
 
         # Obliczanie Rule-Guided Loss i zbieranie statystyk naruszeń
-        r_loss, batch_stats = rule_loss_with_stats(outputs_offence_severity, outputs_action, weight=0.3)
+        r_loss, batch_stats = rule_loss_with_stats(
+            outputs_offence_severity, outputs_action, weight=0.3
+        )
 
         # Akumulacja statystyk naruszeń dla raportu epoki
-        epoch_rule_stats['R1'] += batch_stats['R1_Dive_Violation']
-        epoch_rule_stats['R2_3'] += batch_stats['R2_3_Violent_LowSev']
-        epoch_rule_stats['R5'] += batch_stats['R5_RedCard_MildAction']
+        epoch_rule_stats["R1"] += batch_stats["R1_Dive_Violation"]
+        epoch_rule_stats["R2_3"] += batch_stats["R2_3_Violent_LowSev"]
+        epoch_rule_stats["R5"] += batch_stats["R5_RedCard_MildAction"]
 
         if train:
             # Podczas treningu dodajemy r_loss do głównej funkcji celu
@@ -243,14 +287,15 @@ def train(dataloader,
     return (
         os.path.join(model_name, prediction_file),
         loss_total_action / total_loss,
-        loss_total_offence_severity / total_loss
+        loss_total_offence_severity / total_loss,
     )
 
 
-def evaluation(dataloader,
-               model,
-               set_name="test",
-               ):
+def evaluation(
+    dataloader,
+    model,
+    set_name="test",
+):
 
     model.eval()
 
@@ -266,7 +311,8 @@ def evaluation(dataloader,
 
         preds_sev = torch.argmax(outputs_offence_severity.detach().cpu(), dim=1)
         preds_act = torch.argmax(outputs_action.detach().cpu(), dim=1)
-        _decode_predictions(preds_sev, preds_act, actions, action)
+        sev_probs, act_probs = _compute_probs(outputs_offence_severity, outputs_action)
+        _decode_predictions(preds_sev, preds_act, actions, action, sev_probs, act_probs)
 
     gc.collect()
     torch.cuda.empty_cache()
