@@ -32,6 +32,7 @@ _TORCHVISION_MODELS = {
     "s3d",
     "mvit_v2_s",
     "mvit_v1_b",
+    "tadaformer_b16",
 }
 _ALL_MODELS = _TORCHVISION_MODELS | set(HF_VIDEOMAE_REGISTRY.keys())
 

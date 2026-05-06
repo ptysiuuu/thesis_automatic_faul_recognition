@@ -22,7 +22,6 @@ from backbone_attention_pool import (
     VideoMAEv2BackboneAttnPool,
 )
 
-
 # ---------------------------------------------------------------------------
 # HuggingFace VideoMAE registry  (key → (hf_model_id, hidden_size))
 # ---------------------------------------------------------------------------
@@ -224,6 +223,15 @@ class MVNetwork(torch.nn.Module):
 
         elif net_name == "mvit_v1_b":
             network = mvit_v1_b(weights=MViT_V1_B_Weights.DEFAULT)
+            self.feat_dim = 768
+        elif net_name == "tadaformer_b16":
+            from tadaformer_backbone import TAdaFormerBackbone
+
+            network = TAdaFormerBackbone(
+                checkpoint_path="/net/tscratch/people/plgaszos/sn-mvfoul/checkpoints/tadaformer_b16_k710.pth",
+                num_frames=16,
+                drop_path=0.1,
+            )
             self.feat_dim = 768
 
         else:
