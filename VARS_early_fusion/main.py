@@ -495,6 +495,10 @@ def main(args):
             optimizer, T_max=max_epochs, eta_min=1e-6
         )
 
+    logging.info(
+        f"Optimizer param groups: {[len(g['params']) for g in optimizer.param_groups]}"
+    )
+
     # --- loss functions ---
     if weighted_loss == "Yes":
         criterion_action = nn.CrossEntropyLoss(

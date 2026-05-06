@@ -14,6 +14,15 @@ logging.getLogger("torchvision").setLevel(logging.ERROR)
 
 HDF5_ROOT = "/net/tscratch/people/plgaszos/SoccerNet_HDF5"
 
+_CLIP_ENCODER = None
+
+
+def _get_clip_encoder():
+    global _CLIP_ENCODER
+    if _CLIP_ENCODER is None:
+        _CLIP_ENCODER = CLIPTextEncoder()
+    return _CLIP_ENCODER
+
 
 class MultiViewDataset(Dataset):
     def __init__(
@@ -97,14 +106,13 @@ class MultiViewDataset(Dataset):
         if len(prompts) == 0:
             return torch.zeros(0, 512, dtype=torch.float)
 
-        encoder = CLIPTextEncoder()
+        encoder = _get_clip_encoder()
         all_embs = []
         with torch.no_grad():
             for i in range(0, len(prompts), 256):
                 batch = prompts[i : i + 256]
                 all_embs.append(encoder(batch))
         embeddings = torch.cat(all_embs, dim=0)
-        del encoder
         return embeddings
 
     def _get_hdf5(self):

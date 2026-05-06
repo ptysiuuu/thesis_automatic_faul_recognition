@@ -232,6 +232,7 @@ class MVNetwork(torch.nn.Module):
                 checkpoint_path="/net/tscratch/people/plgaszos/sn-mvfoul/checkpoints/tadaformer_b16_k710.pth",
                 num_frames=16,
                 drop_path=0.1,
+                apply_renormalize=False,
             )
             self.feat_dim = 768
 

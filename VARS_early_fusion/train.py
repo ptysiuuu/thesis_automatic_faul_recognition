@@ -440,7 +440,7 @@ def _train_epoch(
             targets_try_to_play = targets_try_to_play.cuda()
             targets_handball = targets_handball.cuda()
             mvclips = mvclips.cuda().float()
-            text_emb = text_emb.cuda().float()
+            text_emb = text_emb.cuda().float().detach()
 
             if pbar is not None:
                 pbar.update()
@@ -461,6 +461,15 @@ def _train_epoch(
                 out_sev, out_act = full_out[0], full_out[1]
                 out_contact, out_bodypart = full_out[2], full_out[3]
                 out_try_to_play, out_handball = full_out[4], full_out[5]
+
+            if train and n_batches % 100 == 0:
+                mvnet = getattr(model, "mvnetwork", None)
+                if mvnet is not None:
+                    agg = getattr(mvnet, "aggregation_model", None)
+                    text_bridge = getattr(agg, "text_bridge", None)
+                    if text_bridge is not None:
+                        gate_val = torch.sigmoid(text_bridge.gate).item()
+                        logging.info(f"  text_bridge gate: {gate_val:.4f}")
 
             if out_sev.dim() == 1:
                 out_sev = out_sev.unsqueeze(0)

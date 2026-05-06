@@ -7,7 +7,7 @@ Input  : [B, C, T, H, W]
 Output : [B, 768]
 
 Notes:
-- Uses CLIP mean/std normalisation (not ImageNet)
+- Optionally renormalizes from MViT/ImageNet stats to CLIP stats
 - num_frames=16, tublet_stride=2 → 8 temporal tokens
 - forward() returns [B, 768] via CLS token mean across temporal dim
 """
@@ -101,10 +101,12 @@ class TAdaFormerBackbone(nn.Module):
         checkpoint_path: str,
         num_frames: int = 16,
         drop_path: float = 0.1,
+        apply_renormalize: bool = True,
     ):
         super().__init__()
         self.num_frames = num_frames
         self.feat_dim = 768
+        self.apply_renormalize = apply_renormalize
         self.fc = nn.Sequential()  # stub for MVNetwork compat
 
         # Register normalisation as buffers so they move with .cuda()
@@ -186,8 +188,9 @@ class TAdaFormerBackbone(nn.Module):
                 x, size=(self.num_frames, H, W), mode="trilinear", align_corners=False
             )
 
-        # Re-normalise from MViT stats → CLIP stats
-        x = self._renormalize(x)
+        if self.apply_renormalize:
+            # Re-normalise from MViT stats → CLIP stats
+            x = self._renormalize(x)
 
         # VisionTransformer.forward handles [B, C, T, H, W] directly
         # Returns [B, 768] via CLS token averaged over temporal tokens

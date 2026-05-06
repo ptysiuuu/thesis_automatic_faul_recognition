@@ -68,6 +68,13 @@ def build_prompt(
             parts.append("player tried to play the ball")
     elif try_to_play == "No":
         parts.append("player made no attempt to play the ball")
+    else:
+        if touch_ball == "Yes":
+            parts.append("ball was touched")
+        elif touch_ball == "No":
+            parts.append("ball was not touched")
+        else:
+            parts.append("attempt to play the ball was not recorded")
 
     return ", ".join(parts)
 
