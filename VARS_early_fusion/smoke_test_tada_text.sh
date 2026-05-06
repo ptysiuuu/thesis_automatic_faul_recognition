@@ -29,5 +29,6 @@ python main.py \
     --end_frame           87 \
     --batch_size          1 \
     --max_num_worker      4 \
+	--cascade_severity	\
     --model_name          "VARS_smoke_text" \
     --GPU                 0
