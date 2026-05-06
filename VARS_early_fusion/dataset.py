@@ -2,6 +2,7 @@ from torch.utils.data import Dataset, WeightedRandomSampler
 import torch
 import random
 from data_loader import label2vectormerge, clips2vectormerge
+from text_bridge import CLIPTextEncoder
 from torchvision.io.video import read_video
 import warnings
 import logging
@@ -15,8 +16,19 @@ HDF5_ROOT = "/net/tscratch/people/plgaszos/SoccerNet_HDF5"
 
 
 class MultiViewDataset(Dataset):
-    def __init__(self, path, start, end, fps, split, num_views, transform=None,
-                 transform_model=None, fusion_mode=False):
+    def __init__(
+        self,
+        path,
+        start,
+        end,
+        fps,
+        split,
+        num_views,
+        transform=None,
+        transform_model=None,
+        fusion_mode=False,
+        use_text_bridge=False,
+    ):
         self.split = split
         self.start = start
         self.end = end
@@ -24,32 +36,50 @@ class MultiViewDataset(Dataset):
         self.transform_model = transform_model
         self.num_views = num_views
         self.fusion_mode = fusion_mode
+        self.use_text_bridge = use_text_bridge
         self.factor = (end - start) / (((end - start) / 25) * fps)
+        self.text_embeddings = None
+        self._zero_text_emb = torch.zeros(512, dtype=torch.float)
 
-        if split != 'Chall':
-            (self.labels_offence_severity,
-             self.labels_action,
-             self.labels_contact,
-             self.labels_bodypart,
-             self.labels_try_to_play,
-             self.labels_handball,
-             self.distribution_offence_severity,
-             self.distribution_action,
-             not_taking,
-             self.number_of_actions) = label2vectormerge(path, split, num_views)
+        if split != "Chall":
+            (
+                self.labels_offence_severity,
+                self.labels_action,
+                self.labels_contact,
+                self.labels_bodypart,
+                self.labels_try_to_play,
+                self.labels_handball,
+                self.labels_prompt,
+                self.distribution_offence_severity,
+                self.distribution_action,
+                not_taking,
+                self.number_of_actions,
+            ) = label2vectormerge(path, split, num_views)
 
             self.clips = clips2vectormerge(path, split, num_views, not_taking)
 
             n = len(self.labels_offence_severity)
-            self.distribution_offence_severity = torch.div(self.distribution_offence_severity, n)
+            self.distribution_offence_severity = torch.div(
+                self.distribution_offence_severity, n
+            )
             self.distribution_action = torch.div(self.distribution_action, n)
 
-            self.weights_offence_severity = torch.div(1, torch.sqrt(self.distribution_offence_severity))
+            self.weights_offence_severity = torch.div(
+                1, torch.sqrt(self.distribution_offence_severity)
+            )
             self.weights_action = torch.div(1, torch.sqrt(self.distribution_action))
-            self.weights_offence_severity = self.weights_offence_severity / self.weights_offence_severity.mean()
+            self.weights_offence_severity = (
+                self.weights_offence_severity / self.weights_offence_severity.mean()
+            )
             self.weights_action = self.weights_action / self.weights_action.mean()
+
+            if self.use_text_bridge:
+                self.text_embeddings = self._build_text_embedding_cache(
+                    self.labels_prompt
+                )
         else:
             self.clips = clips2vectormerge(path, split, num_views, [])
+            self.labels_prompt = []
 
         self.length = len(self.clips)
 
@@ -57,9 +87,25 @@ class MultiViewDataset(Dataset):
         self._hdf5_path = hdf5_path if os.path.exists(hdf5_path) else None
         self._hdf5 = None
 
-        print(f"Loaded {self.length} actions for {split} "
-              f"({'HDF5' if self._hdf5_path else 'fallback mp4'}, "
-              f"{'early fusion' if fusion_mode else 'multi-view'})")
+        print(
+            f"Loaded {self.length} actions for {split} "
+            f"({'HDF5' if self._hdf5_path else 'fallback mp4'}, "
+            f"{'early fusion' if fusion_mode else 'multi-view'})"
+        )
+
+    def _build_text_embedding_cache(self, prompts):
+        if len(prompts) == 0:
+            return torch.zeros(0, 512, dtype=torch.float)
+
+        encoder = CLIPTextEncoder()
+        all_embs = []
+        with torch.no_grad():
+            for i in range(0, len(prompts), 256):
+                batch = prompts[i : i + 256]
+                all_embs.append(encoder(batch))
+        embeddings = torch.cat(all_embs, dim=0)
+        del encoder
+        return embeddings
 
     def _get_hdf5(self):
         if self._hdf5_path is None:
@@ -114,7 +160,9 @@ class MultiViewDataset(Dataset):
         for j in range(len(frames)):
             if j % self.factor < 1:
                 f = frames[j].unsqueeze(0)
-                final_frames = f if final_frames is None else torch.cat((final_frames, f), 0)
+                final_frames = (
+                    f if final_frames is None else torch.cat((final_frames, f), 0)
+                )
 
         if final_frames is None:
             return None
@@ -129,7 +177,7 @@ class MultiViewDataset(Dataset):
 
     def _process_clip_video(self, clip_path):
         try:
-            video, _, _ = read_video(clip_path, pts_unit='sec', output_format="THWC")
+            video, _, _ = read_video(clip_path, pts_unit="sec", output_format="THWC")
         except Exception as e:
             print(f"Read error {clip_path}: {e}")
             return None
@@ -137,13 +185,15 @@ class MultiViewDataset(Dataset):
         if video.shape[0] < 2:
             return None
 
-        frames = video[self.start:self.end]
+        frames = video[self.start : self.end]
         final_frames = None
 
         for j in range(len(frames)):
             if j % self.factor < 1:
                 f = frames[j].unsqueeze(0)
-                final_frames = f if final_frames is None else torch.cat((final_frames, f), 0)
+                final_frames = (
+                    f if final_frames is None else torch.cat((final_frames, f), 0)
+                )
 
         if final_frames is None:
             return None
@@ -160,8 +210,11 @@ class MultiViewDataset(Dataset):
         available_clips = self.clips[index]
         num_available = len(available_clips)
 
-        indices = (random.sample(range(num_available), num_available)
-                   if self.split == 'Train' else list(range(num_available)))
+        indices = (
+            random.sample(range(num_available), num_available)
+            if self.split == "Train"
+            else list(range(num_available))
+        )
 
         processed_views = []
         for idx in indices:
@@ -173,7 +226,7 @@ class MultiViewDataset(Dataset):
             return self.__getitem__(random.randint(0, self.length - 1))
 
         # Random view dropout during training (view-level regularisation)
-        if self.split == 'Train' and len(processed_views) > 1:
+        if self.split == "Train" and len(processed_views) > 1:
             surviving = [v for v in processed_views if random.random() > 0.2]
             if len(surviving) > 0:
                 processed_views = surviving
@@ -181,13 +234,23 @@ class MultiViewDataset(Dataset):
         videos = torch.stack(processed_views, dim=0)
 
         if videos.shape[0] < self.num_views:
-            pad_shape = list(videos.shape)
-            pad_shape[0] = self.num_views - videos.shape[0]
-            padding = torch.zeros(pad_shape, dtype=videos.dtype)
+            # Duplicate real views cyclically instead of
+            # zero-padding — zero views waste aggregator capacity on empty tokens.
+            # Views 1+ (replays) are duplicated; view 0 (live) is never the sole
+            # padding source so the aggregator sees diverse replay angles.
+            n_have = videos.shape[0]
+            n_need = self.num_views - n_have
+            # Cycle through views 1..n_have-1 (replays) for padding; fall back
+            # to view 0 only if there is truly just one view.
+            replay_pool = videos[1:] if n_have > 1 else videos
+            indices = [i % len(replay_pool) for i in range(n_need)]
+            padding = replay_pool[indices]
             videos = torch.cat((videos, padding), dim=0)
 
-        videos = videos[:self.num_views]
-        videos = videos.permute(0, 2, 1, 3, 4)  # [V, C, T, H, W] — comment kept for compat
+        videos = videos[: self.num_views]
+        videos = videos.permute(
+            0, 2, 1, 3, 4
+        )  # [V, C, T, H, W] — comment kept for compat
         # Actual layout after this permute is [V, T, C, H, W] (C and T are swapped).
 
         if self.fusion_mode:
@@ -201,24 +264,41 @@ class MultiViewDataset(Dataset):
         else:
             clip_out = videos
 
-        if self.split != 'Chall':
+        if self.split != "Chall":
+            text_emb = (
+                self.text_embeddings[index]
+                if self.text_embeddings is not None
+                else self._zero_text_emb
+            )
             return (
-                self.labels_offence_severity[index][0],              # (4,) one-hot
-                self.labels_action[index][0],                        # (8,) one-hot
+                self.labels_offence_severity[index][0],  # (4,) one-hot
+                self.labels_action[index][0],  # (8,) one-hot
                 torch.tensor(self.labels_contact[index], dtype=torch.float),
                 torch.tensor(self.labels_bodypart[index], dtype=torch.float),
                 torch.tensor(self.labels_try_to_play[index], dtype=torch.float),
                 torch.tensor(self.labels_handball[index], dtype=torch.float),
                 clip_out.clone(),
                 self.number_of_actions[index],
+                text_emb,
             )
         else:
             dummy = torch.tensor(0.0)
-            return dummy, dummy, dummy, dummy, dummy, dummy, clip_out.clone(), str(index)
+            text_emb = self._zero_text_emb
+            return (
+                dummy,
+                dummy,
+                dummy,
+                dummy,
+                dummy,
+                dummy,
+                clip_out.clone(),
+                str(index),
+                text_emb,
+            )
 
     def __len__(self):
         return self.length
 
     def __del__(self):
-        if hasattr(self, '_hdf5') and self._hdf5 is not None:
+        if hasattr(self, "_hdf5") and self._hdf5 is not None:
             self._hdf5.close()

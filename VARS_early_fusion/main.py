@@ -112,6 +112,11 @@ def checkArguments(args):
         raise ValueError("end_frame - start_frame must be >= 2")
     if not (1 <= args.fps <= 25):
         raise ValueError("--fps must be 1-25")
+    if args.use_text_bridge:
+        if args.fusion_mode:
+            raise ValueError("--use_text_bridge is only supported in multi-view mode")
+        if args.pooling_type != "transformer":
+            raise ValueError("--use_text_bridge requires --pooling_type transformer")
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +153,7 @@ def main(args):
     cascade_severity = args.cascade_severity
     uncertainty_weighting = args.uncertainty_weighting
     freeze_epoch = args.freeze_epoch
+    use_text_bridge = args.use_text_bridge
 
     number_of_frames = int(
         (end_frame - start_frame) / (((end_frame - start_frame) / 25) * fps)
@@ -230,6 +236,7 @@ def main(args):
         fps=fps,
         transform_model=transforms_model,
         fusion_mode=fusion_mode,
+        use_text_bridge=use_text_bridge,
     )
 
     if only_evaluation == 0:
@@ -332,12 +339,13 @@ def main(args):
             agr_type=pooling_type,
             graph_topology=graph_topology,
             cascade_severity=cascade_severity,
+            use_text_bridge=use_text_bridge,
         ).cuda()
         backbone_prefix = "aggregation_model.model."
         logging.info(
             f"Multi-view mode: MVNetwork (backbone={pre_model}, agr={pooling_type}, "
             f"topology={graph_topology if pooling_type == 'gat' else 'n/a'}, "
-            f"cascade_severity={cascade_severity})"
+            f"cascade_severity={cascade_severity}, text_bridge={use_text_bridge})"
         )
 
     if path_to_model_weights != "":
@@ -562,6 +570,12 @@ if __name__ == "__main__":
         default="transformer",
         type=str,
         help="max | attention | transformer | crossattn | gat (ignored when --fusion_mode)",
+    )
+    parser.add_argument(
+        "--use_text_bridge",
+        action="store_true",
+        default=False,
+        help="Enable per-sample CLIP text conditioning (multi-view transformer only)",
     )
     parser.add_argument(
         "--graph_topology",

@@ -201,9 +201,9 @@ def _decode_predictions(preds_sev, preds_act, actions, action_ids):
 # ---------------------------------------------------------------------------
 
 
-def _run_with_tta(model, mvclips):
-    o1 = model(mvclips)
-    o2 = model(mvclips.flip(-1))
+def _run_with_tta(model, mvclips, text_emb=None):
+    o1 = model(mvclips, text_emb=text_emb)
+    o2 = model(mvclips.flip(-1), text_emb=text_emb)
     sev = (o1[0] + o2[0]) / 2
     act = (o1[1] + o2[1]) / 2
     return sev, act, o1[2], o1[3], o1[4], o1[5]
@@ -430,6 +430,7 @@ def _train_epoch(
                 targets_handball,
                 mvclips,
                 action_ids,
+                text_emb,
             ) = batch
 
             targets_sev = targets_sev.cuda()
@@ -439,11 +440,13 @@ def _train_epoch(
             targets_try_to_play = targets_try_to_play.cuda()
             targets_handball = targets_handball.cuda()
             mvclips = mvclips.cuda().float()
+            text_emb = text_emb.cuda().float()
 
             if pbar is not None:
                 pbar.update()
 
             # --- forward ---
+            full_out = None
             if not train and use_tta:
                 (
                     out_sev,
@@ -452,9 +455,9 @@ def _train_epoch(
                     out_bodypart,
                     out_try_to_play,
                     out_handball,
-                ) = _run_with_tta(model, mvclips)
+                ) = _run_with_tta(model, mvclips, text_emb=text_emb)
             else:
-                full_out = model(mvclips)
+                full_out = model(mvclips, text_emb=text_emb)
                 out_sev, out_act = full_out[0], full_out[1]
                 out_contact, out_bodypart = full_out[2], full_out[3]
                 out_try_to_play, out_handball = full_out[4], full_out[5]
@@ -497,7 +500,7 @@ def _train_epoch(
 
             # Temporal entropy regularization — only during training,
             # only if the aggregator returns temporal weights (TransformerAggregate)
-            attention = full_out[6] if not train or not use_tta else None
+            attention = full_out[6] if full_out is not None else None
             loss_temporal = (
                 temporal_entropy_loss(attention) if train else torch.tensor(0.0)
             )
@@ -553,11 +556,12 @@ def evaluation(dataloader, model, ema=None, set_name="test", use_tta=True):
         for batch in dataloader:
             mvclips = batch[6].cuda().float()
             action_ids = batch[7]
+            text_emb = batch[8].cuda().float()
 
             if use_tta:
-                out_sev, out_act, *_ = _run_with_tta(model, mvclips)
+                out_sev, out_act, *_ = _run_with_tta(model, mvclips, text_emb=text_emb)
             else:
-                out = model(mvclips)
+                out = model(mvclips, text_emb=text_emb)
                 out_sev, out_act = out[0], out[1]
 
             preds_sev = ordinal_predict(out_sev.cpu())

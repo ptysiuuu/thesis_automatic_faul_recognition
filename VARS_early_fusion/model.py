@@ -187,6 +187,7 @@ class MVNetwork(torch.nn.Module):
         lifting_net: nn.Module = nn.Sequential(),
         graph_topology: str = "structured",
         cascade_severity: bool = False,
+        use_text_bridge: bool = False,
     ):
         super().__init__()
         self.net_name = net_name
@@ -249,10 +250,11 @@ class MVNetwork(torch.nn.Module):
             lifting_net=lifting_net,
             graph_topology=self.graph_topology,
             cascade_severity=self.cascade_severity,
+            use_text_bridge=use_text_bridge,
         )
 
-    def forward(self, mvimages: torch.Tensor):
-        return self.mvnetwork(mvimages)
+    def forward(self, mvimages: torch.Tensor, text_emb: torch.Tensor = None):
+        return self.mvnetwork(mvimages, text_emb=text_emb)
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +350,7 @@ class EarlyFusionNetwork(nn.Module):
         )
         self.fc_handball = nn.Sequential(nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1))
 
-    def forward(self, fused_clip: torch.Tensor):
+    def forward(self, fused_clip: torch.Tensor, text_emb: torch.Tensor = None):
         # fused_clip: [B, C, T*V, H, W]
         feat = self.backbone(fused_clip)  # [B, 768]
         inter = self.inter(feat)

@@ -3,6 +3,7 @@ import torch
 from torch import nn
 from graph import GraphBuilder, GATLayer
 from dynamic_gat import DynamicGATAggregate
+from text_bridge import TextConditionedBridge
 
 
 class SetNorm(nn.Module):
@@ -152,6 +153,9 @@ class TransformerAggregate(nn.Module):
         num_heads=4,
         lifting_net=nn.Sequential(),
         T_max=8,
+        use_text_bridge=False,
+        text_bridge_heads=8,
+        text_bridge_dropout=0.1,
     ):
         super().__init__()
         self.model = model
@@ -187,11 +191,20 @@ class TransformerAggregate(nn.Module):
         # Temporal localization: replaces mean pool over T'
         self.temporal_localizer = TemporalLocalizer(feat_dim)
 
+        self.text_bridge = None
+        if use_text_bridge:
+            self.text_bridge = TextConditionedBridge(
+                visual_dim=feat_dim,
+                text_dim=512,
+                num_heads=text_bridge_heads,
+                dropout=text_bridge_dropout,
+            )
+
         nn.init.trunc_normal_(self.cls_token, std=0.02)
         nn.init.trunc_normal_(self.view_embeds, std=0.02)
         nn.init.trunc_normal_(self.temporal_embeds, std=0.02)
 
-    def forward(self, mvimages):
+    def forward(self, mvimages, text_emb=None):
         B, V, *_ = mvimages.shape
 
         raw = unbatch_tensor(
@@ -218,6 +231,13 @@ class TransformerAggregate(nn.Module):
         # Returns view-level features [B, V, D] and weights [B, V, T']
         view_features, temporal_weights = self.temporal_localizer(raw, view_mask)
         # view_features: [B, V, D] — replaces raw.mean(dim=2)
+
+        if self.text_bridge is not None and text_emb is not None:
+            view_feats_flat = view_features.reshape(B * V, -1)
+            conditioned = self.text_bridge(view_feats_flat, text_emb, V)
+            delta = (conditioned - view_feats_flat).reshape(B, V, 1, -1)
+            raw = raw + delta
+            view_features = conditioned.view(B, V, -1)
 
         # Quality gate still operates on the temporally-pooled features
         quality = self.quality_gate(view_features)  # [B, V, 1]
@@ -523,6 +543,7 @@ class MVAggregate(nn.Module):
         lifting_net=nn.Sequential(),
         graph_topology="structured",
         cascade_severity=False,
+        use_text_bridge=False,
     ):
         super().__init__()
         self.agr_type = agr_type
@@ -572,7 +593,10 @@ class MVAggregate(nn.Module):
             )
         elif agr_type == "transformer":
             self.aggregation_model = TransformerAggregate(
-                model=model, feat_dim=feat_dim, lifting_net=lifting_net
+                model=model,
+                feat_dim=feat_dim,
+                lifting_net=lifting_net,
+                use_text_bridge=use_text_bridge,
             )
         elif agr_type == "crossattn":
             self.aggregation_model = CrossAttentionAggregate(
@@ -605,8 +629,11 @@ class MVAggregate(nn.Module):
                 model=model, feat_dim=feat_dim, lifting_net=lifting_net
             )
 
-    def forward(self, mvimages):
-        pooled_view, attention = self.aggregation_model(mvimages)  # [B, feat_dim]
+    def forward(self, mvimages, text_emb=None):
+        if self.agr_type == "transformer":
+            pooled_view, attention = self.aggregation_model(mvimages, text_emb=text_emb)
+        else:
+            pooled_view, attention = self.aggregation_model(mvimages)
         inter = self.inter(pooled_view)  # [B, feat_dim]
 
         pred_action = self.fc_action(inter)  # [B, 8]

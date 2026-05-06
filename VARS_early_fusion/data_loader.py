@@ -2,6 +2,7 @@ import os
 import torch
 import json
 from config.classes import EVENT_DICTIONARY
+from text_bridge import build_prompt
 
 
 def _parse_contact(val):
@@ -31,7 +32,7 @@ def _parse_handball(val):
 def label2vectormerge(folder_path, split, num_views):
     path_annotations = os.path.join(folder_path, split, "annotations.json")
 
-    dictionary_action = EVENT_DICTIONARY['action_class']
+    dictionary_action = EVENT_DICTIONARY["action_class"]
 
     if os.path.exists(path_annotations):
         with open(path_annotations) as f:
@@ -52,6 +53,7 @@ def label2vectormerge(folder_path, split, num_views):
     labels_bodypart = []
     labels_try_to_play = []
     labels_handball = []
+    labels_prompt = []
 
     number_of_actions = []
 
@@ -59,55 +61,68 @@ def label2vectormerge(folder_path, split, num_views):
     distribution_action = torch.zeros(1, num_classes_action)
     distribution_offence_severity = torch.zeros(1, num_classes_offence_severity)
 
-    for actions in train_annotations_data['Actions']:
-        action_data = train_annotations_data['Actions'][actions]
-        action_class = action_data.get('Action class', '')
-        offence_class = action_data.get('Offence', '')
-        severity_class = action_data.get('Severity', '')
+    for actions in train_annotations_data["Actions"]:
+        action_data = train_annotations_data["Actions"][actions]
+        action_class = action_data.get("Action class", "")
+        offence_class = action_data.get("Offence", "")
+        severity_class = action_data.get("Severity", "")
 
         # --- auxiliary fields (graceful fallback to 0) ---
-        contact_val = _parse_contact(action_data.get('Contact', ''))
-        bodypart_val = _parse_bodypart(action_data.get('Bodypart', ''))
-        try_to_play_val = _parse_try_to_play(action_data.get('Try to play', ''))
-        handball_val = _parse_handball(action_data.get('Handball', ''))
+        contact_val = _parse_contact(action_data.get("Contact", ""))
+        bodypart_val = _parse_bodypart(action_data.get("Bodypart", ""))
+        try_to_play_val = _parse_try_to_play(action_data.get("Try to play", ""))
+        handball_val = _parse_handball(action_data.get("Handball", ""))
 
         # --- same filtering as original ---
-        if action_class == '' or action_class == 'Dont know':
+        if action_class == "" or action_class == "Dont know":
             not_taking.append(actions)
             continue
 
-        if (offence_class == '' or offence_class == 'Between') and action_class != 'Dive':
+        if (
+            offence_class == "" or offence_class == "Between"
+        ) and action_class != "Dive":
             not_taking.append(actions)
             continue
 
-        if (severity_class == '' or severity_class == '2.0' or severity_class == '4.0') and \
-                action_class != 'Dive' and \
-                offence_class not in ('No offence', 'No Offence'):
+        if (
+            (severity_class == "" or severity_class == "2.0" or severity_class == "4.0")
+            and action_class != "Dive"
+            and offence_class not in ("No offence", "No Offence")
+        ):
             not_taking.append(actions)
             continue
 
-        if offence_class == '' or offence_class == 'Between':
-            offence_class = 'Offence'
+        if offence_class == "" or offence_class == "Between":
+            offence_class = "Offence"
 
-        if severity_class == '' or severity_class == '2.0' or severity_class == '4.0':
-            severity_class = '1.0'
+        if severity_class == "" or severity_class == "2.0" or severity_class == "4.0":
+            severity_class = "1.0"
 
         # --- determine severity index ---
-        if offence_class in ('No Offence', 'No offence'):
+        if offence_class in ("No Offence", "No offence"):
             off_index = 0
-        elif offence_class == 'Offence' and severity_class == '1.0':
+        elif offence_class == "Offence" and severity_class == "1.0":
             off_index = 1
-        elif offence_class == 'Offence' and severity_class == '3.0':
+        elif offence_class == "Offence" and severity_class == "3.0":
             off_index = 2
-        elif offence_class == 'Offence' and severity_class == '5.0':
+        elif offence_class == "Offence" and severity_class == "5.0":
             off_index = 3
         else:
             not_taking.append(actions)
             continue
 
+        prompt = build_prompt(
+            action_class=action_class,
+            contact=action_data.get("Contact", ""),
+            bodypart=action_data.get("Bodypart", ""),
+            upper_body_part=action_data.get("Upper body part", ""),
+            try_to_play=action_data.get("Try to play", ""),
+            touch_ball=action_data.get("Touch ball", ""),
+        )
+
         if num_views == 1:
             # One entry per clip
-            for i in range(len(action_data['Clips'])):
+            for i in range(len(action_data["Clips"])):
                 sev_vec = torch.zeros(1, num_classes_offence_severity)
                 sev_vec[0][off_index] = 1
                 labels_offence_severity.append(sev_vec)
@@ -123,6 +138,7 @@ def label2vectormerge(folder_path, split, num_views):
                 labels_bodypart.append(bodypart_val)
                 labels_try_to_play.append(try_to_play_val)
                 labels_handball.append(handball_val)
+                labels_prompt.append(prompt)
         else:
             sev_vec = torch.zeros(1, num_classes_offence_severity)
             sev_vec[0][off_index] = 1
@@ -139,6 +155,7 @@ def label2vectormerge(folder_path, split, num_views):
             labels_bodypart.append(bodypart_val)
             labels_try_to_play.append(try_to_play_val)
             labels_handball.append(handball_val)
+            labels_prompt.append(prompt)
 
             number_of_actions.append(actions)
 
@@ -149,6 +166,7 @@ def label2vectormerge(folder_path, split, num_views):
         labels_bodypart,
         labels_try_to_play,
         labels_handball,
+        labels_prompt,
         distribution_offence_severity[0],
         distribution_action[0],
         not_taking,
@@ -177,8 +195,10 @@ def clips2vectormerge(folder_path, split, num_views, not_taking):
                 if clip_name in ("clip_0.mp4", "clip_1.mp4") or os.path.exists(cp):
                     clips.append([cp])
         else:
-            clips_all_view = [os.path.join(path_clip, "clip_0.mp4"),
-                              os.path.join(path_clip, "clip_1.mp4")]
+            clips_all_view = [
+                os.path.join(path_clip, "clip_0.mp4"),
+                os.path.join(path_clip, "clip_1.mp4"),
+            ]
             for clip_name in ("clip_2.mp4", "clip_3.mp4"):
                 cp = os.path.join(path_clip, clip_name)
                 if os.path.exists(cp):
