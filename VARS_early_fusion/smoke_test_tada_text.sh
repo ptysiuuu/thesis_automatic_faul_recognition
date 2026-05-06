@@ -10,7 +10,7 @@
 #SBATCH --output=VARS_smoke_text_%x_%j.out
 
 DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
-CHECKPOINT_PATH="/net/tscratch/people/plgaszos/sn-mvfoul/checkpoints/best_tadaformer.pth.tar"
+CHECKPOINT_PATH="/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/models/VARS_tadaformer_b16/5/tadaformer_b16/2e-05/_B2_F1_G0.1_S\ntep3/5_model.pth.tar"
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate vars
