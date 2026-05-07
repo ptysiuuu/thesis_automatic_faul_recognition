@@ -43,14 +43,14 @@ ACTION_NAMES = [
 SEVERITY_NAMES = ["No offence", "No card", "Yellow card", "Red card"]
 
 
-def extract_temporal_weights(model, mvclips, text_emb=None):
+def extract_temporal_weights(model, mvclips):
     """
     Run forward pass and extract temporal attention weights.
     TransformerAggregate now returns weights as attention[6].
     """
     model.eval()
     with torch.no_grad():
-        out = model(mvclips, text_emb=text_emb)
+        out = model(mvclips)
     # out[6] = attention = temporal_weights [B, V, T']
     temporal_weights = out[6]
     pred_sev = out[0]
@@ -208,7 +208,6 @@ def main(args):
         num_views=5,
         transform_model=transforms_model,
         fusion_mode=False,
-        use_text_bridge=args.use_text_bridge,
     )
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4)
 
@@ -230,13 +229,11 @@ def main(args):
                 _,
                 mvclips,
                 action_ids,
-                text_emb,
             ) = batch
             mvclips = mvclips.cuda().float()
-            text_emb = text_emb.cuda().float()
 
             temporal_weights, pred_sev_logits, pred_act_logits = (
-                extract_temporal_weights(model, mvclips, text_emb=text_emb)
+                extract_temporal_weights(model, mvclips)
             )
 
             if temporal_weights is None:
@@ -314,12 +311,6 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--max_batches", type=int, default=321, help="Max validation batches to process"
-    )
-    parser.add_argument(
-        "--use_text_bridge",
-        action="store_true",
-        default=False,
-        help="Enable per-sample text prompts when loading the dataset",
     )
     args = parser.parse_args()
     main(args)

@@ -204,7 +204,7 @@ class TransformerAggregate(nn.Module):
         nn.init.trunc_normal_(self.view_embeds, std=0.02)
         nn.init.trunc_normal_(self.temporal_embeds, std=0.02)
 
-    def forward(self, mvimages, text_emb=None):
+    def forward(self, mvimages):
         B, V, *_ = mvimages.shape
 
         raw = unbatch_tensor(
@@ -232,9 +232,9 @@ class TransformerAggregate(nn.Module):
         view_features, temporal_weights = self.temporal_localizer(raw, view_mask)
         # view_features: [B, V, D] — replaces raw.mean(dim=2)
 
-        if self.text_bridge is not None and text_emb is not None:
+        if self.text_bridge is not None:
             view_feats_flat = view_features.reshape(B * V, -1)
-            conditioned = self.text_bridge(view_feats_flat, text_emb, V)
+            conditioned = self.text_bridge(view_feats_flat, V)
             delta = (conditioned - view_feats_flat).reshape(B, V, 1, -1)
             raw = raw + delta
             view_features = conditioned.view(B, V, -1)
@@ -629,11 +629,8 @@ class MVAggregate(nn.Module):
                 model=model, feat_dim=feat_dim, lifting_net=lifting_net
             )
 
-    def forward(self, mvimages, text_emb=None):
-        if self.agr_type == "transformer":
-            pooled_view, attention = self.aggregation_model(mvimages, text_emb=text_emb)
-        else:
-            pooled_view, attention = self.aggregation_model(mvimages)
+    def forward(self, mvimages):
+        pooled_view, attention = self.aggregation_model(mvimages)
         inter = self.inter(pooled_view)  # [B, feat_dim]
 
         pred_action = self.fc_action(inter)  # [B, 8]

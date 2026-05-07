@@ -254,8 +254,8 @@ class MVNetwork(torch.nn.Module):
             use_text_bridge=use_text_bridge,
         )
 
-    def forward(self, mvimages: torch.Tensor, text_emb: torch.Tensor = None):
-        return self.mvnetwork(mvimages, text_emb=text_emb)
+    def forward(self, mvimages: torch.Tensor):
+        return self.mvnetwork(mvimages)
 
 
 # ---------------------------------------------------------------------------

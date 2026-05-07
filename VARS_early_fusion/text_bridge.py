@@ -3,80 +3,26 @@ import torch.nn as nn
 from typing import List
 
 # ---------------------------------------------------------------------------
-# Prompt assembly
+# Fixed class-level prompts (no sample-specific labels)
 # ---------------------------------------------------------------------------
 
-ACTION_DESCRIPTIONS = {
-    "Tackling": "player slides to take the ball",
-    "Standing tackling": "player uses standing leg to take the ball",
-    "High leg": "player raises leg dangerously near opponent",
-    "Holding": "player grabs or restrains opponent",
-    "Pushing": "player shoves opponent with arm or body",
-    "Elbowing": "player strikes opponent with elbow",
-    "Challenge": "players compete for ball with physical contact",
-    "Dive": "player exaggerates fall to deceive referee",
-}
+ACTION_PROMPTS = [
+    "a player slides or extends their leg to dispossess an opponent",
+    "a player uses their standing leg to block the ball",
+    "a player raises their foot dangerously near an opponent's head",
+    "a player grabs or restrains an opponent with their arm",
+    "a player uses their arm or body to push an opponent",
+    "a player strikes an opponent with their elbow",
+    "two players physically challenge each other for the ball",
+    "a player falls to the ground to deceive the referee",
+]
 
-BODYPART_PHRASES = {
-    "Upper body": "upper body contact",
-    "Under body": "lower body contact",
-}
-
-UPPER_BODY_PHRASES = {
-    "Use of shoulder": "using shoulder",
-    "Use of arm": "using arm",
-    "Use of elbow": "using elbow",
-    "Use of hand": "using hand",
-    "Use of head": "using head",
-    "Use of chest": "using chest",
-}
-
-
-def build_prompt(
-    action_class: str,
-    contact: str,
-    bodypart: str,
-    upper_body_part: str,
-    try_to_play: str,
-    touch_ball: str,
-) -> str:
-    """
-    Build a natural language prompt from annotation fields.
-
-    Example output:
-    "Challenge with upper body contact using shoulder, player tried to play the ball"
-    """
-    parts = []
-
-    base = ACTION_DESCRIPTIONS.get(action_class, action_class.lower())
-    parts.append(base)
-
-    if contact == "With contact":
-        bp = BODYPART_PHRASES.get(bodypart, "")
-        ubp = UPPER_BODY_PHRASES.get(upper_body_part, "")
-        if bp and ubp:
-            parts.append(f"with {bp} {ubp}")
-        elif bp:
-            parts.append(f"with {bp}")
-
-    if try_to_play == "Yes":
-        if touch_ball == "Yes":
-            parts.append("player tried to play ball and touched it")
-        elif touch_ball == "No":
-            parts.append("player tried to play ball but did not touch it")
-        else:
-            parts.append("player tried to play the ball")
-    elif try_to_play == "No":
-        parts.append("player made no attempt to play the ball")
-    else:
-        if touch_ball == "Yes":
-            parts.append("ball was touched")
-        elif touch_ball == "No":
-            parts.append("ball was not touched")
-        else:
-            parts.append("attempt to play the ball was not recorded")
-
-    return ", ".join(parts)
+SEVERITY_PROMPTS = [
+    "fair challenge, no foul committed, legal contact",
+    "minor foul, careless but not dangerous, no card needed",
+    "reckless challenge showing disregard for opponent, yellow card",
+    "excessive force endangering opponent safety, red card",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -123,12 +69,10 @@ class CLIPTextEncoder(nn.Module):
 class TextConditionedBridge(nn.Module):
     """
     Lightweight cross-attention that conditions visual features on
-    per-sample text embeddings.
+    fixed class-level text embeddings.
 
     visual : [B*V, 768]   - TAdaFormer output (one vector per view)
-    text   : [B, 512]     - CLIP embedding of per-sample prompt
-
-    Output : [B*V, 768]   - same shape, text-conditioned.
+    Output : [B*V, 768]   - same shape, text-conditioned
     """
 
     def __init__(
@@ -141,12 +85,24 @@ class TextConditionedBridge(nn.Module):
         super().__init__()
         self.visual_dim = visual_dim
 
-        self.text_proj = nn.Sequential(
-            nn.Linear(text_dim, visual_dim),
-            nn.LayerNorm(visual_dim),
-        )
+        encoder = CLIPTextEncoder()
+        with torch.no_grad():
+            action_embs = encoder(ACTION_PROMPTS)
+            severity_embs = encoder(SEVERITY_PROMPTS)
 
-        self.cross_attn = nn.MultiheadAttention(
+        self.register_buffer("action_embs", action_embs, persistent=True)
+        self.register_buffer("severity_embs", severity_embs, persistent=True)
+
+        self.action_proj = nn.Linear(text_dim, visual_dim)
+        self.severity_proj = nn.Linear(text_dim, visual_dim)
+
+        self.action_attn = nn.MultiheadAttention(
+            embed_dim=visual_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.severity_attn = nn.MultiheadAttention(
             embed_dim=visual_dim,
             num_heads=num_heads,
             dropout=dropout,
@@ -155,36 +111,45 @@ class TextConditionedBridge(nn.Module):
         self.norm = nn.LayerNorm(visual_dim)
         self.dropout = nn.Dropout(dropout)
 
-        # Learned gate: starts at 0 so bridge has zero effect at init
+        # Learned gate: starts at 0 (sigmoid=0.5) for equal action/severity mix
         self.gate = nn.Parameter(torch.zeros(1))
 
         # Small init to avoid disrupting pretrained backbone
-        nn.init.xavier_uniform_(self.text_proj[0].weight, gain=0.1)
-        nn.init.zeros_(self.text_proj[0].bias)
+        nn.init.xavier_uniform_(self.action_proj.weight, gain=0.1)
+        nn.init.zeros_(self.action_proj.bias)
+        nn.init.xavier_uniform_(self.severity_proj.weight, gain=0.1)
+        nn.init.zeros_(self.severity_proj.bias)
 
     def forward(
-        self, visual: torch.Tensor, text_emb: torch.Tensor, num_views: int
+        self, visual: torch.Tensor, num_views: int, return_attn: bool = False
     ) -> torch.Tensor:
         """
         visual   : [B*V, 768]
-        text_emb : [B, 512]   - one prompt per action
         num_views: V
 
-        Returns  : [B*V, 768]
+        Returns  : [B*V, 768] (optionally attention weights)
         """
-        BV, D = visual.shape
-        B = BV // num_views
-
-        text_proj = self.text_proj(text_emb)  # [B, 768]
-
-        # Repeat text V times to align with flattened views
-        text_kv = text_proj.unsqueeze(1)  # [B, 1, 768]
-        text_kv = text_kv.repeat_interleave(num_views, dim=0)  # [B*V, 1, 768]
-
+        BV, _ = visual.shape
         visual_q = visual.unsqueeze(1)  # [B*V, 1, 768]
-        attended, _ = self.cross_attn(query=visual_q, key=text_kv, value=text_kv)
-        attended = attended.squeeze(1)  # [B*V, 768]
+
+        action_kv = self.action_proj(self.action_embs)  # [8, 768]
+        severity_kv = self.severity_proj(self.severity_embs)  # [4, 768]
+
+        action_kv = action_kv.unsqueeze(0).expand(BV, -1, -1)
+        severity_kv = severity_kv.unsqueeze(0).expand(BV, -1, -1)
+
+        attn_action, weights_action = self.action_attn(
+            query=visual_q, key=action_kv, value=action_kv
+        )
+        attn_severity, weights_severity = self.severity_attn(
+            query=visual_q, key=severity_kv, value=severity_kv
+        )
 
         gate = torch.sigmoid(self.gate)
-        out = self.norm(visual + gate * self.dropout(attended))
+        combined = gate * attn_action + (1.0 - gate) * attn_severity
+        combined = combined.squeeze(1)  # [B*V, 768]
+
+        out = self.norm(visual + self.dropout(combined))
+        if return_attn:
+            return out, weights_action, weights_severity
         return out

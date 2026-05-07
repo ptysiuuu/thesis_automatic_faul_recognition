@@ -2,7 +2,6 @@ import os
 import torch
 import json
 from config.classes import EVENT_DICTIONARY
-from text_bridge import build_prompt
 
 
 def _parse_contact(val):
@@ -53,8 +52,6 @@ def label2vectormerge(folder_path, split, num_views):
     labels_bodypart = []
     labels_try_to_play = []
     labels_handball = []
-    labels_prompt = []
-
     number_of_actions = []
 
     total_distribution = torch.zeros(num_classes_offence_severity, num_classes_action)
@@ -111,15 +108,6 @@ def label2vectormerge(folder_path, split, num_views):
             not_taking.append(actions)
             continue
 
-        prompt = build_prompt(
-            action_class=action_class,
-            contact=action_data.get("Contact", ""),
-            bodypart=action_data.get("Bodypart", ""),
-            upper_body_part=action_data.get("Upper body part", ""),
-            try_to_play=action_data.get("Try to play", ""),
-            touch_ball=action_data.get("Touch ball", ""),
-        )
-
         if num_views == 1:
             # One entry per clip
             for i in range(len(action_data["Clips"])):
@@ -138,7 +126,6 @@ def label2vectormerge(folder_path, split, num_views):
                 labels_bodypart.append(bodypart_val)
                 labels_try_to_play.append(try_to_play_val)
                 labels_handball.append(handball_val)
-                labels_prompt.append(prompt)
         else:
             sev_vec = torch.zeros(1, num_classes_offence_severity)
             sev_vec[0][off_index] = 1
@@ -155,8 +142,6 @@ def label2vectormerge(folder_path, split, num_views):
             labels_bodypart.append(bodypart_val)
             labels_try_to_play.append(try_to_play_val)
             labels_handball.append(handball_val)
-            labels_prompt.append(prompt)
-
             number_of_actions.append(actions)
 
     return (
@@ -166,7 +151,6 @@ def label2vectormerge(folder_path, split, num_views):
         labels_bodypart,
         labels_try_to_play,
         labels_handball,
-        labels_prompt,
         distribution_offence_severity[0],
         distribution_action[0],
         not_taking,

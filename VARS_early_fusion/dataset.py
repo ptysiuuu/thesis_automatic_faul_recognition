@@ -2,7 +2,6 @@ from torch.utils.data import Dataset, WeightedRandomSampler
 import torch
 import random
 from data_loader import label2vectormerge, clips2vectormerge
-from text_bridge import CLIPTextEncoder
 from torchvision.io.video import read_video
 import warnings
 import logging
@@ -13,15 +12,6 @@ warnings.filterwarnings("ignore", category=UserWarning)
 logging.getLogger("torchvision").setLevel(logging.ERROR)
 
 HDF5_ROOT = "/net/tscratch/people/plgaszos/SoccerNet_HDF5"
-
-_CLIP_ENCODER = None
-
-
-def _get_clip_encoder():
-    global _CLIP_ENCODER
-    if _CLIP_ENCODER is None:
-        _CLIP_ENCODER = CLIPTextEncoder()
-    return _CLIP_ENCODER
 
 
 class MultiViewDataset(Dataset):
@@ -36,7 +26,6 @@ class MultiViewDataset(Dataset):
         transform=None,
         transform_model=None,
         fusion_mode=False,
-        use_text_bridge=False,
     ):
         self.split = split
         self.start = start
@@ -45,10 +34,7 @@ class MultiViewDataset(Dataset):
         self.transform_model = transform_model
         self.num_views = num_views
         self.fusion_mode = fusion_mode
-        self.use_text_bridge = use_text_bridge
         self.factor = (end - start) / (((end - start) / 25) * fps)
-        self.text_embeddings = None
-        self._zero_text_emb = torch.zeros(512, dtype=torch.float)
 
         if split != "Chall":
             (
@@ -58,7 +44,6 @@ class MultiViewDataset(Dataset):
                 self.labels_bodypart,
                 self.labels_try_to_play,
                 self.labels_handball,
-                self.labels_prompt,
                 self.distribution_offence_severity,
                 self.distribution_action,
                 not_taking,
@@ -82,13 +67,8 @@ class MultiViewDataset(Dataset):
             )
             self.weights_action = self.weights_action / self.weights_action.mean()
 
-            if self.use_text_bridge:
-                self.text_embeddings = self._build_text_embedding_cache(
-                    self.labels_prompt
-                )
         else:
             self.clips = clips2vectormerge(path, split, num_views, [])
-            self.labels_prompt = []
 
         self.length = len(self.clips)
 
@@ -101,19 +81,6 @@ class MultiViewDataset(Dataset):
             f"({'HDF5' if self._hdf5_path else 'fallback mp4'}, "
             f"{'early fusion' if fusion_mode else 'multi-view'})"
         )
-
-    def _build_text_embedding_cache(self, prompts):
-        if len(prompts) == 0:
-            return torch.zeros(0, 512, dtype=torch.float)
-
-        encoder = _get_clip_encoder()
-        all_embs = []
-        with torch.no_grad():
-            for i in range(0, len(prompts), 256):
-                batch = prompts[i : i + 256]
-                all_embs.append(encoder(batch))
-        embeddings = torch.cat(all_embs, dim=0)
-        return embeddings
 
     def _get_hdf5(self):
         if self._hdf5_path is None:
@@ -273,11 +240,6 @@ class MultiViewDataset(Dataset):
             clip_out = videos
 
         if self.split != "Chall":
-            text_emb = (
-                self.text_embeddings[index]
-                if self.text_embeddings is not None
-                else self._zero_text_emb
-            )
             return (
                 self.labels_offence_severity[index][0],  # (4,) one-hot
                 self.labels_action[index][0],  # (8,) one-hot
@@ -287,11 +249,9 @@ class MultiViewDataset(Dataset):
                 torch.tensor(self.labels_handball[index], dtype=torch.float),
                 clip_out.clone(),
                 self.number_of_actions[index],
-                text_emb,
             )
         else:
             dummy = torch.tensor(0.0)
-            text_emb = self._zero_text_emb
             return (
                 dummy,
                 dummy,
@@ -301,7 +261,6 @@ class MultiViewDataset(Dataset):
                 dummy,
                 clip_out.clone(),
                 str(index),
-                text_emb,
             )
 
     def __len__(self):

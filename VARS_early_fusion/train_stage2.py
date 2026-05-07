@@ -164,18 +164,13 @@ class FeatureBank(Dataset):
 
 
 @torch.no_grad()
-def _pooled(
-    model, mvclips: torch.Tensor, fusion_mode: bool, text_emb: torch.Tensor = None
-) -> torch.Tensor:
+def _pooled(model, mvclips: torch.Tensor, fusion_mode: bool) -> torch.Tensor:
     """Forward through backbone+aggregator only; return [B, D] pooled vector."""
     if fusion_mode:
         return model.backbone(mvclips)
     else:
         agg = model.mvnetwork.aggregation_model
-        if getattr(agg, "text_bridge", None) is not None and text_emb is not None:
-            pooled, _ = agg(mvclips, text_emb=text_emb)
-        else:
-            pooled, _ = agg(mvclips)
+        pooled, _ = agg(mvclips)
         return pooled
 
 
@@ -192,11 +187,9 @@ def _run_loader(model, loader, fusion_mode: bool):
             t_handball,
             mvclips,
             action_ids,
-            text_emb,
         ) = batch
         mvclips = mvclips.cuda().float()
-        text_emb = text_emb.cuda().float()
-        pooled = _pooled(model, mvclips, fusion_mode, text_emb=text_emb)
+        pooled = _pooled(model, mvclips, fusion_mode)
         feats.append(pooled.cpu().numpy().astype(np.float32))
         sevs.append(t_sev.numpy().astype(np.float32))
         acts.append(t_act.numpy().astype(np.int32))

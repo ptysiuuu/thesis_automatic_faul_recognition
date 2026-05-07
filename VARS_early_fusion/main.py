@@ -112,11 +112,6 @@ def checkArguments(args):
         raise ValueError("end_frame - start_frame must be >= 2")
     if not (1 <= args.fps <= 25):
         raise ValueError("--fps must be 1-25")
-    if args.use_text_bridge:
-        if args.fusion_mode:
-            raise ValueError("--use_text_bridge is only supported in multi-view mode")
-        if args.pooling_type != "transformer":
-            raise ValueError("--use_text_bridge requires --pooling_type transformer")
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +231,6 @@ def main(args):
         fps=fps,
         transform_model=transforms_model,
         fusion_mode=fusion_mode,
-        use_text_bridge=use_text_bridge,
     )
 
     if only_evaluation == 0:

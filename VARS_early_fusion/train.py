@@ -10,11 +10,14 @@ import json
 import io, contextlib
 from SoccerNet.Evaluation.MV_FoulRecognition import evaluate as _sn_evaluate
 
+
 def evaluate(ann_path, pred_file):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         result = _sn_evaluate(ann_path, pred_file)
     return result
+
+
 from tqdm import tqdm
 
 # ---------------------------------------------------------------------------
@@ -208,9 +211,9 @@ def _decode_predictions(preds_sev, preds_act, actions, action_ids):
 # ---------------------------------------------------------------------------
 
 
-def _run_with_tta(model, mvclips, text_emb=None):
-    o1 = model(mvclips, text_emb=text_emb)
-    o2 = model(mvclips.flip(-1), text_emb=text_emb)
+def _run_with_tta(model, mvclips):
+    o1 = model(mvclips)
+    o2 = model(mvclips.flip(-1))
     sev = (o1[0] + o2[0]) / 2
     act = (o1[1] + o2[1]) / 2
     return sev, act, o1[2], o1[3], o1[4], o1[5]
@@ -437,7 +440,6 @@ def _train_epoch(
                 targets_handball,
                 mvclips,
                 action_ids,
-                text_emb,
             ) = batch
 
             targets_sev = targets_sev.cuda()
@@ -447,7 +449,6 @@ def _train_epoch(
             targets_try_to_play = targets_try_to_play.cuda()
             targets_handball = targets_handball.cuda()
             mvclips = mvclips.cuda().float()
-            text_emb = text_emb.cuda().float().detach()
 
             if pbar is not None:
                 pbar.update()
@@ -462,10 +463,10 @@ def _train_epoch(
                     out_bodypart,
                     out_try_to_play,
                     out_handball,
-                ) = _run_with_tta(model, mvclips, text_emb=text_emb)
+                ) = _run_with_tta(model, mvclips)
                 attention = None
             else:
-                full_out = model(mvclips, text_emb=text_emb)
+                full_out = model(mvclips)
                 out_sev, out_act = full_out[0], full_out[1]
                 out_contact, out_bodypart = full_out[2], full_out[3]
                 out_try_to_play, out_handball = full_out[4], full_out[5]
@@ -574,12 +575,11 @@ def evaluation(dataloader, model, ema=None, set_name="test", use_tta=True):
         for batch in dataloader:
             mvclips = batch[6].cuda().float()
             action_ids = batch[7]
-            text_emb = batch[8].cuda().float()
 
             if use_tta:
-                out_sev, out_act, *_ = _run_with_tta(model, mvclips, text_emb=text_emb)
+                out_sev, out_act, *_ = _run_with_tta(model, mvclips)
             else:
-                out = model(mvclips, text_emb=text_emb)
+                out = model(mvclips)
                 out_sev, out_act = out[0], out[1]
 
             preds_sev = ordinal_predict(out_sev.cpu())
