@@ -6,11 +6,11 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=16:00:00
+#SBATCH --time=22:00:00
 #SBATCH --output=VARS_tadaformer_text_%x_%j.out
 
 DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
-CHECKPOINT_PATH="/net/tscratch/people/plgaszos/sn-mvfoul/checkpoints/best_tadaformer.pth.tar"
+CHECKPOINT_PATH="/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/models/VARS_tadaformer_b16/5/tadaformer_b16/2e-05/_B2_F1_G0.1_Step3/best_model.pth.tar"
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate vars
@@ -20,6 +20,7 @@ python main.py \
     --path                "$DATASET_PATH" \
     --pre_model           tadaformer_b16 \
     --pooling_type        transformer \
+	--cascade_severity \
     --use_text_bridge \
     --continue_training \
     --path_to_model_weights "$CHECKPOINT_PATH" \
