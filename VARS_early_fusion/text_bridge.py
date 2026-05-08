@@ -112,7 +112,7 @@ class TextConditionedBridge(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         # Learned gate: starts at 0 (sigmoid=0.5) for equal action/severity mix
-        self.gate = nn.Parameter(torch.zeros(1))
+        self.gate = nn.Parameter(torch.tensor([-3.0]))
 
         # Small init to avoid disrupting pretrained backbone
         nn.init.xavier_uniform_(self.action_proj.weight, gain=0.1)

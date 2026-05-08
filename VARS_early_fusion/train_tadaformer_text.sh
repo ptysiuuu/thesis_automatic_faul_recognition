@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=22:00:00
+#SBATCH --time=03:00:00
 #SBATCH --output=VARS_tadaformer_text_%x_%j.out
 
 DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
@@ -24,7 +24,7 @@ python main.py \
     --use_text_bridge \
     --continue_training \
     --path_to_model_weights "$CHECKPOINT_PATH" \
-    --freeze_epoch        0 \
+    --freeze_epoch        5 \
     --uncertainty_weighting \
     --batch_size          4 \
     --accum_steps         1 \
