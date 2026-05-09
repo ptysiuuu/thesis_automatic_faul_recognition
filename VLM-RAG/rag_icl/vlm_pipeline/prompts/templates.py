@@ -7,7 +7,7 @@ can be read and compared easily without logic mixed in.
 
 from ..utils.constants import ACTION_CLASSES, SEVERITY_CLASSES
 
-ACTION_LIST_STR   = "\n".join(f"  - {a}" for a in ACTION_CLASSES)
+ACTION_LIST_STR = "\n".join(f"  - {a}" for a in ACTION_CLASSES)
 SEVERITY_LIST_STR = "\n".join(f"  - {s}" for s in SEVERITY_CLASSES)
 
 SYSTEM_PROMPT = (
@@ -342,10 +342,11 @@ COS_FULL_SEV_TMPL = FULL_FRAME_SEVERITY_TMPL  # reuses full-frame severity for s
 # Addresses the Elbowing collapse: Standing tackling / Holding / Pushing all
 # predicted as Elbowing due to visual similarity in upper body contact frames.
 ACTION_DISAMBIGUATION = """\
-CRITICAL DISTINCTIONS (common misclassifications to avoid):
-- ELBOWING: arm/elbow strikes opponent's HEAD or FACE. Ball irrelevant.
-- HOLDING: player grabs opponent's SHIRT, ARM or BODY to impede movement. No strike.
-- PUSHING: player uses HANDS or BODY to shove opponent sideways or forward. No grab.
-- STANDING TACKLING: player attempts to win the BALL with their FOOT while standing.
-- TACKLING: player SLIDES or lunges to win the BALL with their foot.
-Do NOT classify as Elbowing unless the elbow clearly strikes the opponent's upper body/head."""
+CRITICAL DISTINCTIONS:
+- ELBOWING: arm/elbow aggressively strikes opponent's HEAD or FACE.
+- HOLDING: player actively GRABS opponent's SHIRT, ARM or BODY to pull them back.
+- PUSHING: player uses HANDS to shove opponent sideways or forward.
+- STANDING TACKLING: player extends FOOT to play the BALL while remaining on their feet.
+- TACKLING: player SLIDES on the ground to win the BALL.
+
+Final Check: Look closely at the player's hands and feet. If they are grabbing fabric, it is Holding. If they are playing the ball with their foot, it is a Tackle."""
