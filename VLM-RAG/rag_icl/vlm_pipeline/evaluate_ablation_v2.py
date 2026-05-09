@@ -49,39 +49,61 @@ import h5py
 sys.path.insert(0, str(Path(__file__).parent))
 
 from vlm_pipeline.utils import (
-    load_annotations, compute_metrics, compute_severity_priors,
+    load_annotations,
+    compute_metrics,
+    compute_severity_priors,
     compute_per_action_severity_priors,
-    extract_all_views, parse_key_frames, select_key_frames,
+    extract_all_views,
+    parse_key_frames,
+    select_key_frames,
     format_selected_frame_info,
-    ACTION_CLASSES, SEVERITY_CLASSES, PER_ACTION_SEVERITY_PRIOR,
-    SEVERITY_PRIOR_DEFAULT, ALL_STRATEGIES,
+    ACTION_CLASSES,
+    SEVERITY_CLASSES,
+    PER_ACTION_SEVERITY_PRIOR,
+    SEVERITY_PRIOR_DEFAULT,
+    ALL_STRATEGIES,
 )
 from vlm_pipeline.retrieval import (
-    Law12RAG, load_medoid_cache, build_medoid_cache,
-    build_examples_text, build_targeted_examples, build_severity_examples,
+    Law12RAG,
+    load_medoid_cache,
+    build_medoid_cache,
+    build_examples_text,
+    build_targeted_examples,
+    build_severity_examples,
     MViTRetriever,
 )
 from vlm_pipeline.prompts import (
-    build_static_prompt, build_data_driven_prompt,
-    build_two_stage_action_prompt, build_two_stage_severity_prompt,
-    build_ragicl_prompt, build_cos_frame_selection_prompt,
-    build_cos_action_prompt, build_cos_severity_prompt,
-    build_full_frame_severity_prompt, build_per_action_prior_prompt,
-    build_targeted_retrieval_prompt, build_ordinal_severity_prompt,
+    build_static_prompt,
+    build_data_driven_prompt,
+    build_two_stage_action_prompt,
+    build_two_stage_severity_prompt,
+    build_ragicl_prompt,
+    build_cos_frame_selection_prompt,
+    build_cos_action_disambig_prompt,
+    build_cos_severity_prompt,
+    build_full_frame_severity_prompt,
+    build_per_action_prior_prompt,
+    build_targeted_retrieval_prompt,
+    build_ordinal_severity_prompt,
 )
 from vlm_pipeline.strategies.base import (
-    parse_response, parse_action_only, parse_severity_only,
+    parse_response,
+    parse_action_only,
+    parse_severity_only,
 )
 from vlm_pipeline.strategies.severity_focused import (
-    run_full_sev_two_stage, run_per_action_prior, run_targeted_retrieval,
-    run_ordinal_severity, run_cos_full_sev,
+    run_full_sev_two_stage,
+    run_per_action_prior,
+    run_targeted_retrieval,
+    run_ordinal_severity,
+    run_cos_full_sev,
 )
 from vlm_pipeline.backends import get_backend
-
 
 # ---------------------------------------------------------------------------
 # Evaluation loop
 # ---------------------------------------------------------------------------
+
 
 def evaluate(args):
     output_dir = Path(args.output_dir)
@@ -95,7 +117,7 @@ def evaluate(args):
     # ── Load annotations ──────────────────────────────────────────────────────
     samples = load_annotations(args.annotations)
     if args.max_samples:
-        ids = list(samples.keys())[:args.max_samples]
+        ids = list(samples.keys())[: args.max_samples]
         samples = {k: samples[k] for k in ids}
     print(f"Evaluating on {len(samples)} samples.")
 
@@ -114,15 +136,20 @@ def evaluate(args):
     # ── Medoid cache ──────────────────────────────────────────────────────────
     medoid_cache = None
     needs_medoid = args.strategy in {
-        "data_driven", "two_stage", "cos_two_stage",
-        "full_sev_two_stage", "targeted_retrieval",
-        "ordinal_severity", "cos_full_sev",
+        "data_driven",
+        "two_stage",
+        "cos_two_stage",
+        "full_sev_two_stage",
+        "targeted_retrieval",
+        "ordinal_severity",
+        "cos_full_sev",
     }
     if needs_medoid:
         if not args.medoid_cache or not Path(args.medoid_cache).exists():
             raise FileNotFoundError(
                 f"Medoid cache not found: {args.medoid_cache}\n"
-                "Run with --build_medoid_cache first.")
+                "Run with --build_medoid_cache first."
+            )
         medoid_cache = load_medoid_cache(args.medoid_cache)
         print(f"[MedoidCache] Loaded {len(medoid_cache)} entries.")
 
@@ -140,24 +167,30 @@ def evaluate(args):
     predictions = {}
 
     with h5py.File(args.hdf5_path, "r", swmr=True) as hdf5:
-        for action_id, sample in tqdm(samples.items(),
-                                       desc=f"  [{args.strategy}]"):
+        for action_id, sample in tqdm(samples.items(), desc=f"  [{args.strategy}]"):
             action_key = f"action_{action_id}"
             action_hint = ACTION_CLASSES[sample["action"]]
 
             # Load frames (weighted sampling for strategies that benefit)
             weighted = args.strategy in {
-                "cos_two_stage", "full_sev_two_stage", "cos_full_sev"}
+                "cos_two_stage",
+                "full_sev_two_stage",
+                "cos_full_sev",
+            }
             fpv = extract_all_views(
-                hdf5, action_key, sample["clips"],
+                hdf5,
+                action_key,
+                sample["clips"],
                 n_frames=args.frames_per_view,
                 weighted=weighted,
                 max_views=4,
             )
 
             if not fpv:
-                y_true_a.append(sample["action"]); y_pred_a.append(-1)
-                y_true_s.append(sample["severity"]); y_pred_s.append(-1)
+                y_true_a.append(sample["action"])
+                y_pred_a.append(-1)
+                y_true_s.append(sample["severity"])
+                y_pred_s.append(-1)
                 continue
 
             law12_ctx = rag.retrieve(rag.build_query(action_hint))
@@ -172,31 +205,33 @@ def evaluate(args):
                 # ── Row 1: data_driven ─────────────────────────────────────
                 elif args.strategy == "data_driven":
                     mined_text, mined_imgs = build_examples_text(
-                        medoid_cache, n_per_class=1)
+                        medoid_cache, n_per_class=1
+                    )
                     prompt = build_data_driven_prompt(
-                        len(fpv), law12_ctx, mined_text, severity_priors)
+                        len(fpv), law12_ctx, mined_text, severity_priors
+                    )
                     raw = backend.classify(fpv, prompt, extra_images=mined_imgs)
                     act_idx, sev_idx = parse_response(raw)
 
                 # ── Row 2: two_stage ───────────────────────────────────────
                 elif args.strategy == "two_stage":
                     mined_text, mined_imgs = build_examples_text(
-                        medoid_cache, n_per_class=1)
+                        medoid_cache, n_per_class=1
+                    )
                     act_prompt = build_two_stage_action_prompt(
-                        len(fpv), law12_ctx, mined_text)
-                    raw1 = backend.classify(fpv, act_prompt,
-                                            extra_images=mined_imgs)
+                        len(fpv), law12_ctx, mined_text
+                    )
+                    raw1 = backend.classify(fpv, act_prompt, extra_images=mined_imgs)
                     act_idx = parse_action_only(raw1)
                     act_str = ACTION_CLASSES[act_idx] if act_idx != -1 else "Dont know"
 
-                    sev_text, sev_imgs = build_severity_examples(
-                        medoid_cache, act_str)
+                    sev_text, sev_imgs = build_severity_examples(medoid_cache, act_str)
                     sev_law12 = rag.retrieve(rag.build_query(act_str))
                     per_action = per_action_priors.get(act_str, severity_priors)
                     sev_prompt = build_two_stage_severity_prompt(
-                        len(fpv), sev_law12, act_str, sev_text, per_action)
-                    raw2 = backend.classify(fpv, sev_prompt,
-                                            extra_images=sev_imgs)
+                        len(fpv), sev_law12, act_str, sev_text, per_action
+                    )
+                    raw2 = backend.classify(fpv, sev_prompt, extra_images=sev_imgs)
                     sev_idx = parse_severity_only(raw2)
                     raw = f"STAGE1: {raw1}\nSTAGE2: {raw2}"
 
@@ -210,49 +245,56 @@ def evaluate(args):
                 # ── Row 4: cos_two_stage ───────────────────────────────────
                 elif args.strategy == "cos_two_stage":
                     sel_prompt = build_cos_frame_selection_prompt(
-                        len(fpv), args.frames_per_view)
+                        len(fpv), args.frames_per_view
+                    )
                     raw0 = backend.classify(fpv, sel_prompt)
-                    key_idx = parse_key_frames(
-                        raw0, len(fpv), args.frames_per_view)
+                    key_idx = parse_key_frames(raw0, len(fpv), args.frames_per_view)
                     key_fpv = select_key_frames(fpv, key_idx, context_window=1)
                     sel_info = format_selected_frame_info(key_idx, len(fpv))
 
                     mined_text, mined_imgs = build_examples_text(
-                        medoid_cache, n_per_class=1)
-                    act_prompt = build_cos_action_prompt(
-                        len(fpv), law12_ctx, mined_text, sel_info)
+                        medoid_cache, n_per_class=1
+                    )
+                    act_prompt = build_cos_action_disambig_prompt(
+                        len(fpv), law12_ctx, mined_text, sel_info
+                    )
                     raw1 = backend.classify(
-                        key_fpv, act_prompt, extra_images=mined_imgs)
+                        key_fpv, act_prompt, extra_images=mined_imgs
+                    )
                     act_idx = parse_action_only(raw1)
                     act_str = ACTION_CLASSES[act_idx] if act_idx != -1 else "Dont know"
 
-                    sev_text, sev_imgs = build_severity_examples(
-                        medoid_cache, act_str)
+                    sev_text, sev_imgs = build_severity_examples(medoid_cache, act_str)
                     sev_law12 = rag.retrieve(rag.build_query(act_str))
                     per_action = per_action_priors.get(act_str, severity_priors)
                     sev_prompt = build_cos_severity_prompt(
-                        len(fpv), sev_law12, act_str,
-                        sev_text, per_action, sel_info)
-                    raw2 = backend.classify(
-                        key_fpv, sev_prompt, extra_images=sev_imgs)
+                        len(fpv), sev_law12, act_str, sev_text, per_action, sel_info
+                    )
+                    raw2 = backend.classify(key_fpv, sev_prompt, extra_images=sev_imgs)
                     sev_idx = parse_severity_only(raw2)
-                    raw = (f"STAGE0: {raw0}\nSelected: {sel_info}\n"
-                           f"STAGE1: {raw1}\nSTAGE2: {raw2}")
+                    raw = (
+                        f"STAGE0: {raw0}\nSelected: {sel_info}\n"
+                        f"STAGE1: {raw1}\nSTAGE2: {raw2}"
+                    )
 
                 # ── Row 5: full_sev_two_stage (NEW) ───────────────────────
                 elif args.strategy == "full_sev_two_stage":
                     act_idx, sev_idx, raw = run_full_sev_two_stage(
-                        backend=backend, frames_per_view=fpv,
-                        law12_ctx=law12_ctx, medoid_cache=medoid_cache,
+                        backend=backend,
+                        frames_per_view=fpv,
+                        law12_ctx=law12_ctx,
+                        medoid_cache=medoid_cache,
                         severity_priors=severity_priors,
                         frames_per_view_count=args.frames_per_view,
-                        action_hint=action_hint, rag=rag,
+                        action_hint=action_hint,
+                        rag=rag,
                     )
 
                 # ── Row 6: per_action_prior (NEW) ─────────────────────────
                 elif args.strategy == "per_action_prior":
                     act_idx, sev_idx, raw = run_per_action_prior(
-                        backend=backend, frames_per_view=fpv,
+                        backend=backend,
+                        frames_per_view=fpv,
                         law12_ctx=law12_ctx,
                         per_action_priors=per_action_priors,
                     )
@@ -260,24 +302,32 @@ def evaluate(args):
                 # ── Row 7: targeted_retrieval (NEW) ───────────────────────
                 elif args.strategy == "targeted_retrieval":
                     act_idx, sev_idx, raw = run_targeted_retrieval(
-                        backend=backend, frames_per_view=fpv,
-                        law12_ctx=law12_ctx, medoid_cache=medoid_cache,
-                        severity_priors=severity_priors, rag=rag,
+                        backend=backend,
+                        frames_per_view=fpv,
+                        law12_ctx=law12_ctx,
+                        medoid_cache=medoid_cache,
+                        severity_priors=severity_priors,
+                        rag=rag,
                     )
 
                 # ── Row 8: ordinal_severity (NEW) ─────────────────────────
                 elif args.strategy == "ordinal_severity":
                     act_idx, sev_idx, raw = run_ordinal_severity(
-                        backend=backend, frames_per_view=fpv,
-                        law12_ctx=law12_ctx, medoid_cache=medoid_cache,
-                        severity_priors=severity_priors, rag=rag,
+                        backend=backend,
+                        frames_per_view=fpv,
+                        law12_ctx=law12_ctx,
+                        medoid_cache=medoid_cache,
+                        severity_priors=severity_priors,
+                        rag=rag,
                     )
 
                 # ── Row 9: cos_full_sev (NEW — best combined) ─────────────
                 elif args.strategy == "cos_full_sev":
                     act_idx, sev_idx, raw = run_cos_full_sev(
-                        backend=backend, frames_per_view=fpv,
-                        law12_ctx=law12_ctx, medoid_cache=medoid_cache,
+                        backend=backend,
+                        frames_per_view=fpv,
+                        law12_ctx=law12_ctx,
+                        medoid_cache=medoid_cache,
                         severity_priors=severity_priors,
                         frames_per_view_count=args.frames_per_view,
                         rag=rag,
@@ -290,27 +340,32 @@ def evaluate(args):
                 print(f"  Error on {action_id}: {e}")
                 act_idx, sev_idx, raw = -1, -1, str(e)
 
-            y_true_a.append(sample["action"]); y_pred_a.append(act_idx)
-            y_true_s.append(sample["severity"]); y_pred_s.append(sev_idx)
+            y_true_a.append(sample["action"])
+            y_pred_a.append(act_idx)
+            y_true_s.append(sample["severity"])
+            y_pred_s.append(sev_idx)
             predictions[action_id] = {
-                "true_action":   sample["action"],
-                "pred_action":   act_idx,
+                "true_action": sample["action"],
+                "pred_action": act_idx,
                 "true_severity": sample["severity"],
                 "pred_severity": sev_idx,
-                "raw_response":  raw,
+                "raw_response": raw,
             }
 
     # ── Save results ──────────────────────────────────────────────────────────
     metrics = compute_metrics(y_true_a, y_pred_a, y_true_s, y_pred_s)
-    metrics["strategy"]   = args.strategy
+    metrics["strategy"] = args.strategy
     metrics["model_name"] = args.model_name
     metrics["predictions"] = predictions
 
     with open(output_dir / "results.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
-    summary = {k: v for k, v in metrics.items()
-               if k not in ("predictions", "confusion_action", "confusion_severity")}
+    summary = {
+        k: v
+        for k, v in metrics.items()
+        if k not in ("predictions", "confusion_action", "confusion_severity")
+    }
     with open(output_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2)
 
@@ -329,6 +384,7 @@ def evaluate(args):
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="VLM foul classification ablation v2 (modular pipeline)",
@@ -336,13 +392,14 @@ def main():
         epilog=__doc__,
     )
 
-    parser.add_argument("--build_medoid_cache", action="store_true",
-        help="Build medoid cache from training data and exit.")
+    parser.add_argument(
+        "--build_medoid_cache",
+        action="store_true",
+        help="Build medoid cache from training data and exit.",
+    )
 
-    parser.add_argument("--strategy",
-        choices=ALL_STRATEGIES, default="static_few_shot")
-    parser.add_argument("--model_name",
-        default="Qwen/Qwen2.5-VL-7B-Instruct")
+    parser.add_argument("--strategy", choices=ALL_STRATEGIES, default="static_few_shot")
+    parser.add_argument("--model_name", default="Qwen/Qwen2.5-VL-7B-Instruct")
 
     # Data paths
     parser.add_argument("--hdf5_path")
@@ -353,24 +410,34 @@ def main():
 
     # FAISS / medoid
     parser.add_argument("--faiss_index_path", default=None)
-    parser.add_argument("--faiss_meta_path",  default=None)
-    parser.add_argument("--medoid_cache",
-        default="/net/tscratch/people/plgaszos/vlm_rag_icl/medoid_cache.json")
+    parser.add_argument("--faiss_meta_path", default=None)
+    parser.add_argument(
+        "--medoid_cache",
+        default="/net/tscratch/people/plgaszos/vlm_rag_icl/medoid_cache.json",
+    )
 
     # Eval params
-    parser.add_argument("--frames_per_view",  type=int, default=4)
-    parser.add_argument("--retrieval_k",      type=int, default=3)
-    parser.add_argument("--max_samples",      type=int, default=None)
-    parser.add_argument("--output_dir",       default="ablation_results_v2/output")
+    parser.add_argument("--frames_per_view", type=int, default=4)
+    parser.add_argument("--retrieval_k", type=int, default=3)
+    parser.add_argument("--max_samples", type=int, default=None)
+    parser.add_argument("--output_dir", default="ablation_results_v2/output")
 
     args = parser.parse_args()
 
     if args.build_medoid_cache:
-        if not all([args.train_hdf5, args.train_annotations,
-                    args.faiss_index_path, args.faiss_meta_path]):
-            parser.error("--build_medoid_cache requires: "
-                         "--train_hdf5, --train_annotations, "
-                         "--faiss_index_path, --faiss_meta_path")
+        if not all(
+            [
+                args.train_hdf5,
+                args.train_annotations,
+                args.faiss_index_path,
+                args.faiss_meta_path,
+            ]
+        ):
+            parser.error(
+                "--build_medoid_cache requires: "
+                "--train_hdf5, --train_annotations, "
+                "--faiss_index_path, --faiss_meta_path"
+            )
         build_medoid_cache(
             train_hdf5_path=args.train_hdf5,
             train_annotations_path=args.train_annotations,
