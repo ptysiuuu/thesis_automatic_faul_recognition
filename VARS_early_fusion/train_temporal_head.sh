@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=04:00:00
+#SBATCH --time=06:00:00
 #SBATCH --output=VARS_temporal_head_%j.out
 
 DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
@@ -21,7 +21,7 @@ python train_temporal_head.py \
     --checkpoint      "$CHECKPOINT" \
     --feature_bank    temporal_tokens.h5 \
     --path            "$DATASET_PATH" \
-    --n_passes        10 \
+    --n_passes        3 \
     --num_views       5 \
     --fps             17 \
     --start_frame     63 \

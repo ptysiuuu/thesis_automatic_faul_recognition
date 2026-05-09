@@ -76,7 +76,11 @@ class TokenDataset(Dataset):
             g = f[split]
             self.tokens         = torch.from_numpy(g["tokens"][:])          # [N, 8, 768]
             self.targets_sev    = torch.from_numpy(g["targets_sev"][:])     # [N, 4]
-            self.targets_act    = torch.from_numpy(g["targets_act"][:]).long()  # [N, 8]
+            targets_act_raw = torch.from_numpy(g["targets_act"][:])
+            if targets_act_raw.dim() == 2:
+                self.targets_act = targets_act_raw.argmax(dim=1).long()  # [N]
+            else:
+                self.targets_act = targets_act_raw.long()  # [N]
             self.targets_contact    = torch.from_numpy(g["targets_contact"][:]).float()
             self.targets_bodypart   = torch.from_numpy(g["targets_bodypart"][:]).float()
             self.targets_ttp        = torch.from_numpy(g["targets_try_to_play"][:]).float()
@@ -398,27 +402,21 @@ def extract_tokens(checkpoint_path, dataset_path, hdf5_path, n_passes,
             B, V = mvclips.shape[:2]
             mvclips = mvclips.cuda().float()
 
-            # Process each view through backbone and get tokens
-            # mvclips: [B, V, C, T, H, W] after dataset permute
-            # Flatten views into batch
-            clips_flat = mvclips.reshape(B * V, *mvclips.shape[2:])  # [B*V, C, T, H, W]
+            # Flatten views into batch dim for backbone
+            clips_flat = mvclips.reshape(B * V, *mvclips.shape[2:])  # [B*V, T, C, H, W]
+            tokens_flat = backbone(clips_flat, return_tokens=True)    # [B*V, 8, 768]
+            T_out, D = tokens_flat.shape[1], tokens_flat.shape[2]
+            tokens_per_sample = tokens_flat.reshape(B, V, T_out, D)  # [B, V, 8, 768]
 
-            tokens_flat = backbone(clips_flat, return_tokens=True)   # [B*V, 8, 768]
-            tokens_per_sample = tokens_flat.reshape(B, V, 8, 768)    # [B, V, 8, 768]
-
-            if len(all_tokens) == 0:
-            # Mean pool across views to get [B, 8, 768]
-            # This preserves temporal structure while aggregating views
-            # Alternative: take only view 0 (live camera) — can ablate
+            # Mean pool across valid views → [B, 8, 768]
             view_mask = mvclips.abs().sum(dim=tuple(range(2, mvclips.dim()))) == 0  # [B, V]
-            # view_mask: [B, V] -> [B, V, 1, 1] for broadcasting over [B, V, T', D]
-            mask_4d = view_mask.unsqueeze(-1).unsqueeze(-1)  # [B, V, 1, 1]
+            mask_4d = view_mask.unsqueeze(-1).unsqueeze(-1)           # [B, V, 1, 1]
             tokens_masked = tokens_per_sample.masked_fill(mask_4d, 0.0)
-            valid_counts_3d = (~view_mask).float().sum(dim=1, keepdim=True).unsqueeze(-1)  # [B, 1, 1]
-            sample_tokens = tokens_masked.sum(dim=1) / valid_counts_3d.clamp(min=1)  # [B, T', D]
+            valid_counts = (~view_mask).float().sum(dim=1)            # [B]
+            valid_counts = valid_counts.clamp(min=1).view(B, 1, 1)   # [B, 1, 1]
+            sample_tokens = tokens_masked.sum(dim=1) / valid_counts   # [B, T', D]
 
             all_tokens.append(sample_tokens.cpu().numpy().astype(np.float32))
-            # ensure [B, 4] and [B, 8] regardless of batch size
             all_sevs.append(t_sev.reshape(-1, 4).numpy().astype(np.float32))
             all_acts.append(t_act.reshape(-1, 8).numpy().astype(np.float32))
             all_contacts.append(t_contact.numpy().astype(np.float32))
@@ -450,7 +448,7 @@ def extract_tokens(checkpoint_path, dataset_path, hdf5_path, n_passes,
         for split in ["Valid", "Test"]:
             logging.info(f"Extracting {split} (no augmentation)...")
             ds = MultiViewDataset(**ds_kwargs, split=split, num_views=num_views)
-            loader = DataLoader(ds, batch_size=4, shuffle=False,
+            loader = DataLoader(ds, batch_size=16, shuffle=False,
                                 num_workers=max_workers, pin_memory=True)
             data = run_loader(loader)
             save_group(hf, split.lower(), *data)
@@ -465,7 +463,7 @@ def extract_tokens(checkpoint_path, dataset_path, hdf5_path, n_passes,
             logging.info(f"  Pass {i+1}/{n_passes}")
             ds = MultiViewDataset(**ds_kwargs, split="Train",
                                   num_views=num_views, transform=augmentation)
-            loader = DataLoader(ds, batch_size=4, shuffle=True,
+            loader = DataLoader(ds, batch_size=16, shuffle=True,
                                 num_workers=max_workers, pin_memory=True)
             tokens, sevs, acts, contacts, bodyparts, ttps, handballs, ids = run_loader(loader)
             all_tokens.append(tokens); all_sevs.append(sevs)
@@ -666,7 +664,7 @@ def main(args):
 
         # Class-balanced sampler for severity
         from torch.utils.data import WeightedRandomSampler
-        sev_classes = train_ds.targets_sev.argmax(dim=1)
+        sev_classes = train_ds.targets_sev.float().argmax(dim=1)
         counts = torch.bincount(sev_classes)
         weights = 1.0 / counts.float().clamp(min=1)
         sample_weights = weights[sev_classes]
@@ -680,7 +678,7 @@ def main(args):
                               num_workers=2, pin_memory=True)
 
         # Action class weights
-        act_counts = torch.bincount(train_ds.targets_act, minlength=8).float()
+        act_counts = torch.bincount(train_ds.targets_act.long(), minlength=8).float()
         act_weights = (1.0 / act_counts.clamp(min=1))
         act_weights = (act_weights / act_weights.sum() * 8).cuda()
 
