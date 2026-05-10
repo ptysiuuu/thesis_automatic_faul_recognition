@@ -87,6 +87,7 @@ from vlm_pipeline.prompts import (
     build_per_action_prior_prompt,
     build_targeted_retrieval_prompt,
     build_ordinal_severity_prompt,
+    build_cos_action_prompt,
 )
 from vlm_pipeline.strategies.base import (
     parse_response,
@@ -265,7 +266,7 @@ def evaluate(args):
                     mined_text, mined_imgs = build_examples_text(
                         medoid_cache, n_per_class=1
                     )
-                    act_prompt = build_cos_action_disambig_prompt(
+                    act_prompt = build_cos_action_prompt(
                         len(fpv), law12_ctx, mined_text, sel_info
                     )
                     raw1 = backend.classify(
@@ -280,7 +281,7 @@ def evaluate(args):
                     sev_prompt = build_cos_severity_prompt(
                         len(fpv), sev_law12, act_str, sev_text, per_action, sel_info
                     )
-                    raw2 = backend.classify(key_fpv, sev_prompt, extra_images=sev_imgs)
+                    raw2 = backend.classify(fpv, sev_prompt, extra_images=sev_imgs)
                     sev_idx = parse_severity_only(raw2)
                     raw = (
                         f"STAGE0: {raw0}\nSelected: {sel_info}\n"
