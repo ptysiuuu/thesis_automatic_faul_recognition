@@ -146,6 +146,7 @@ def evaluate(args):
         "targeted_retrieval",
         "ordinal_severity",
         "cos_full_sev",
+        "description_first",
     }
     if needs_medoid:
         if not args.medoid_cache or not Path(args.medoid_cache).exists():
