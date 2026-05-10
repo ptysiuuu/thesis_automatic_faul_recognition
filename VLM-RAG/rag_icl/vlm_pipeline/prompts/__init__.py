@@ -3,6 +3,8 @@ from .builders import (
     build_data_driven_prompt,
     build_two_stage_action_prompt,
     build_two_stage_severity_prompt,
+    build_description_prompt,
+    build_severity_from_description_prompt,
     build_ragicl_prompt,
     build_cos_frame_selection_prompt,
     build_cos_action_prompt,

@@ -1,0 +1,42 @@
+{
+  "error": "No valid predictions",
+  "strategy": "static_few_shot",
+  "model_name": "qwen2.5vl:7b",
+  "predictions": {
+    "0": {
+      "true_action": 3,
+      "pred_action": -1,
+      "true_severity": 2,
+      "pred_severity": -1,
+      "raw_response": "NO FRAMES FOUND"
+    },
+    "1": {
+      "true_action": 6,
+      "pred_action": -1,
+      "true_severity": 1,
+      "pred_severity": -1,
+      "raw_response": "NO FRAMES FOUND"
+    },
+    "3": {
+      "true_action": 5,
+      "pred_action": -1,
+      "true_severity": 2,
+      "pred_severity": -1,
+      "raw_response": "NO FRAMES FOUND"
+    },
+    "6": {
+      "true_action": 5,
+      "pred_action": -1,
+      "true_severity": 2,
+      "pred_severity": -1,
+      "raw_response": "NO FRAMES FOUND"
+    },
+    "7": {
+      "true_action": 0,
+      "pred_action": -1,
+      "true_severity": 2,
+      "pred_severity": -1,
+      "raw_response": "NO FRAMES FOUND"
+    }
+  }
+}

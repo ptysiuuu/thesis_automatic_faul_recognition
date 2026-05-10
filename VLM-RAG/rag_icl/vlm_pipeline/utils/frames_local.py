@@ -36,10 +36,10 @@ from pathlib import Path
 from typing import List, Optional
 from PIL import Image
 
-
 # ---------------------------------------------------------------------------
 # Core video → frames extraction
 # ---------------------------------------------------------------------------
+
 
 def _read_frames_cv2(video_path: str, n_frames: int = 4) -> List[Image.Image]:
     """Extract n evenly-spaced frames using OpenCV."""
@@ -92,10 +92,12 @@ def read_clip_frames(video_path: str, n_frames: int = 4) -> List[Image.Image]:
     Read n evenly-spaced frames from a video file.
     Tries OpenCV first, falls back to imageio.
     """
+    print(f"DEBUG SZUKAM PLIKU: {video_path}")
     if not os.path.exists(video_path):
         return []
     try:
         import cv2
+
         frames = _read_frames_cv2(video_path, n_frames)
         if frames:
             return frames
@@ -127,16 +129,17 @@ def read_clip_frames_weighted(video_path: str, n_frames: int = 8) -> List[Image.
 
     center = T // 2
     dense_start = max(0, center - T // 5)
-    dense_end   = min(T - 1, center + T // 5)
+    dense_end = min(T - 1, center + T // 5)
     n_dense = max(1, n_frames - 4)
-    n_edge  = (n_frames - n_dense) // 2
+    n_edge = (n_frames - n_dense) // 2
 
-    early  = np.linspace(0, dense_start, n_edge + 1, dtype=int)[:-1]
-    dense  = np.linspace(dense_start, dense_end, n_dense, dtype=int)
-    late   = np.linspace(dense_end, T - 1, n_edge + 1, dtype=int)[1:]
+    early = np.linspace(0, dense_start, n_edge + 1, dtype=int)[:-1]
+    dense = np.linspace(dense_start, dense_end, n_dense, dtype=int)
+    late = np.linspace(dense_end, T - 1, n_edge + 1, dtype=int)[1:]
     indices = np.unique(np.concatenate([early, dense, late]))[:n_frames]
 
     import cv2
+
     cap = cv2.VideoCapture(video_path)
     frames = []
     for idx in sorted(indices):
@@ -152,6 +155,7 @@ def read_clip_frames_weighted(video_path: str, n_frames: int = 8) -> List[Image.
 # SoccerNet directory structure helpers
 # ---------------------------------------------------------------------------
 
+
 def get_clip_path(data_root: str, split: str, action_id: str, clip_name: str) -> str:
     """
     Build full path to a clip file.
@@ -161,6 +165,8 @@ def get_clip_path(data_root: str, split: str, action_id: str, clip_name: str) ->
 
     clip_name examples: "clip_0.mp4", "clip_1.mp4"
     """
+    if not clip_name.endswith(".mp4"):
+        clip_name += ".mp4"
     return os.path.join(data_root, split, f"action_{action_id}", clip_name)
 
 
@@ -186,7 +192,7 @@ def load_annotations_local(data_root: str, split: str) -> dict:
 
     samples = {}
     for action_id, action_data in data["Actions"].items():
-        action_class  = action_data.get("Action class", "")
+        action_class = action_data.get("Action class", "")
         offence_class = action_data.get("Offence", "")
         severity_class = action_data.get("Severity", "")
 
@@ -194,8 +200,11 @@ def load_annotations_local(data_root: str, split: str) -> dict:
             continue
         if offence_class in {"Between", ""} and action_class != "Dive":
             continue
-        if severity_class in {"2.0", "4.0"} and action_class != "Dive" \
-                and offence_class not in ("No offence", "No Offence"):
+        if (
+            severity_class in {"2.0", "4.0"}
+            and action_class != "Dive"
+            and offence_class not in ("No offence", "No Offence")
+        ):
             continue
 
         if offence_class in {"Between", ""}:
@@ -230,9 +239,9 @@ def load_annotations_local(data_root: str, split: str) -> dict:
             clip_names = [f"clip_{i}.mp4" for i in range(len(clips_data))]
 
         samples[action_id] = {
-            "action":   action_idx,
+            "action": action_idx,
             "severity": severity_idx,
-            "clips":    clip_names,
+            "clips": clip_names,
         }
 
     return samples

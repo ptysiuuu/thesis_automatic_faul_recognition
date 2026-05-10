@@ -1,0 +1,5 @@
+{
+  "error": "No valid predictions",
+  "strategy": "static_few_shot",
+  "model_name": "qwen2.5vl:7b"
+}

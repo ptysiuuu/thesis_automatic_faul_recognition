@@ -26,6 +26,7 @@ STRATEGIES:
   Row 7  targeted_retrieval   — two-stage with targeted medoid examples ← NEW
   Row 8  ordinal_severity     — two-stage with ordinal force reasoning ← NEW
   Row 9  cos_full_sev         — best combined: CoS + full frames + ordinal ← NEW
+    Row 10 description_first    — description -> action -> severity-from-text ← NEW
 
 Usage:
   python evaluate_ablation_v2.py --strategy cos_full_sev --max_samples 50
@@ -99,6 +100,7 @@ from vlm_pipeline.strategies.severity_focused import (
     run_ordinal_severity,
     run_cos_full_sev,
 )
+from vlm_pipeline.strategies.description_first import DescriptionFirstStrategy
 from vlm_pipeline.backends import get_backend
 
 # ---------------------------------------------------------------------------
@@ -161,6 +163,7 @@ def evaluate(args):
 
     # ── VLM backend ───────────────────────────────────────────────────────────
     backend = get_backend(args.model_name)
+    description_first_strategy = DescriptionFirstStrategy()
 
     # ── Eval loop ─────────────────────────────────────────────────────────────
     y_true_a, y_pred_a = [], []
@@ -177,6 +180,7 @@ def evaluate(args):
                 "cos_two_stage",
                 "full_sev_two_stage",
                 "cos_full_sev",
+                "description_first",
             }
             fpv = extract_all_views(
                 hdf5,
@@ -332,6 +336,16 @@ def evaluate(args):
                         severity_priors=severity_priors,
                         frames_per_view_count=args.frames_per_view,
                         rag=rag,
+                    )
+
+                # ── Row 10: description_first (NEW) ──────────────────────
+                elif args.strategy == "description_first":
+                    act_idx, sev_idx, raw = description_first_strategy.classify(
+                        backend=backend,
+                        frames_per_view=fpv,
+                        law12_ctx=law12_ctx,
+                        medoid_cache=medoid_cache,
+                        frames_per_view_count=args.frames_per_view,
                     )
 
                 else:

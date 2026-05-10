@@ -131,6 +131,47 @@ Rules:
 Respond with ONLY this JSON:
 {{"severity": "<severity>", "reasoning": "<one sentence citing force level>"}}"""
 
+# ── Row 2b: Description-first — stage 1 (physical description only) ──────────
+DESCRIPTION_FIRST_DESCRIPTION_TMPL = """\
+You are analyzing a football incident from {n_views} camera angles.
+View 0 is the live broadcast camera. Views 1+ are replay cameras.
+
+Describe only the visible physical interaction in factual terms.
+Focus on:
+- how fast the challenge is moving
+- how high the foot, knee, or arm is raised
+- whether the challenging player seems in control or out of control
+- what happens to the opponent: fall, stumble, or no visible effect
+- whether the movement appears aimed at the ball
+
+Write a short factual description. Do not judge the incident.
+"""
+
+# ── Row 2b: Description-first — stage 2 (severity from description) ──────────
+DESCRIPTION_FIRST_SEVERITY_TMPL = """\
+You are classifying a football incident from a written description instead of video frames.
+
+The action class is: {action_class}
+
+{law12_context}
+
+Description:
+{description}
+
+Use IFAB Law 12 criteria explicitly:
+- careless -> no card
+- reckless -> yellow card
+- excessive force -> red card
+- no meaningful contact or simulation -> no offence
+
+Decide the severity from the description only.
+
+SEVERITY (choose exactly one):
+{severity_list}
+
+Respond with ONLY this JSON:
+{{"severity": "<severity>", "reasoning": "<one sentence>"}}"""
+
 # ── Row 3: RAG-ICL ────────────────────────────────────────────────────────────
 RAGICL_TMPL = """\
 You are analyzing a potential football foul from {n_views} camera angles.
