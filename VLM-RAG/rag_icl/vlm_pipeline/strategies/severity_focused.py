@@ -48,6 +48,7 @@ from ..utils.frames import (
 from ..prompts.builders import (
     build_cos_frame_selection_prompt,
     build_cos_action_disambig_prompt,
+    build_cos_static_severity_prompt,
     build_description_prompt,
     build_severity_from_description_prompt,
     build_cos_action_prompt,
@@ -396,6 +397,69 @@ def run_cos_two_stage_description_severity(
     raw = (
         f"STAGE0 (CoS selection): {raw0}\nSelected: {sel_info}\n"
         f"STAGE1 (action): {raw1}\nSTAGE2 (description): {raw_desc}\nSTAGE3 (severity): {raw2}"
+    )
+    return act_idx, sev_idx, raw
+
+
+def run_cos_static_sev(
+    backend,
+    frames_per_view: List[List[Image.Image]],
+    law12_ctx: str,
+    medoid_cache: dict,
+    severity_priors: dict,
+    per_action_priors: dict,
+    frames_per_view_count: int,
+    rag,
+) -> Tuple[int, int, str]:
+    """
+    CoS + Static severity variant:
+    Stage 0: CoS frame selection (key frames for contact moment)
+    Stage 1: Action from key frames + medoid examples
+    Stage 2: Severity from ALL frames with STATIC_EXAMPLES (no medoid retrieval)
+
+    Hypothesis: static text examples (manually curated) work better than
+    medoid retrieval for severity calibration, while keeping full frames
+    to preserve force/approach information.
+    """
+    n_views = len(frames_per_view)
+
+    # Stage 0: CoS frame selection
+    sel_prompt = build_cos_frame_selection_prompt(n_views, frames_per_view_count)
+    raw0 = backend.classify(frames_per_view, sel_prompt)
+    key_indices = parse_key_frames(raw0, n_views, frames_per_view_count)
+    key_frames = select_key_frames(frames_per_view, key_indices, context_window=1)
+    sel_info = format_selected_frame_info(key_indices, n_views)
+
+    # Stage 1: action from key frames with medoid examples
+    all_text, all_imgs = build_examples_text(medoid_cache, n_per_class=1)
+    act_prompt = build_cos_action_disambig_prompt(
+        n_views=n_views,
+        law12_context=law12_ctx,
+        mined_examples=all_text,
+        selected_frame_info=sel_info,
+    )
+    raw1 = backend.classify(key_frames, act_prompt, extra_images=all_imgs)
+    act_idx = parse_action_only(raw1)
+    act_str = ACTION_CLASSES[act_idx] if act_idx != -1 else "Dont know"
+
+    # Stage 2: severity from ALL frames with static examples (no medoid)
+    per_action = per_action_priors.get(act_str, severity_priors)
+    sev_prompt = build_cos_static_severity_prompt(
+        n_views=n_views,
+        law12_context=law12_ctx,
+        predicted_action=act_str,
+        severity_priors=per_action,
+    )
+
+    # KEY: use FULL frames for severity, with static examples
+    raw2 = backend.classify(frames_per_view, sev_prompt)
+    sev_idx = parse_severity_only(raw2)
+
+    raw = (
+        f"STAGE0 (CoS selection): {raw0}\n"
+        f"Selected: {sel_info}\n"
+        f"STAGE1 (action, key frames): {raw1}\n"
+        f"STAGE2 (static severity, full frames): {raw2}"
     )
     return act_idx, sev_idx, raw
 

@@ -82,7 +82,8 @@ ALL_STRATEGIES = [
     "ordinal_severity",  # Row 8: reframe severity as ordinal comparison task
     "cos_full_sev",
     "description_first",  # Row 10: description -> action -> severity-from-text
-    "cos_two_stage_description_severity",
+    "cos_two_stage_description_severity",  # CoS action + description-first severity
+    "cos_static_sev",  # CoS action + static examples severity (all frames)
     "flow_hard_neg",
     "cos_disambig",
 ]

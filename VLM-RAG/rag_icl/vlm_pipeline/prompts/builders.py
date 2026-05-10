@@ -276,3 +276,31 @@ def build_cos_action_disambig_prompt(
         selected_frame_info=selected_frame_info,
         action_list=ACTION_LIST_STR,
     )
+
+
+def build_cos_static_severity_prompt(
+    n_views: int,
+    law12_context: str,
+    predicted_action: str,
+    severity_priors: dict,
+) -> str:
+    """
+    CoS severity stage using static examples (not medoid retrieval).
+    Uses FULL_FRAME_SEVERITY_TMPL with STATIC_EXAMPLES for severity context.
+    Includes per-action hint for calibration.
+    """
+
+    def _prior_str(priors: dict) -> str:
+        if not priors:
+            return "No priors available."
+        total = sum(priors.values())
+        return "; ".join(f"{sev}: {100.0*ct/total:.1f}%" for sev, ct in priors.items())
+
+    return FULL_FRAME_SEVERITY_TMPL.format(
+        n_views=n_views,
+        law12_context=law12_context,
+        predicted_action=predicted_action,
+        severity_examples=STATIC_EXAMPLES,
+        prior_str=_prior_str(severity_priors),
+        severity_list=SEVERITY_LIST_STR,
+    )

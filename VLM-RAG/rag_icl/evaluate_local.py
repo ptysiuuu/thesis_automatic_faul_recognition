@@ -104,7 +104,10 @@ from vlm_pipeline.strategies.base import (
     parse_severity_only,
 )
 from vlm_pipeline.strategies.description_first import DescriptionFirstStrategy
-from vlm_pipeline.strategies.severity_focused import run_cos_two_stage_description_severity
+from vlm_pipeline.strategies.severity_focused import (
+    run_cos_two_stage_description_severity,
+    run_cos_static_sev,
+)
 from vlm_pipeline.backends.ollama import OllamaBackend
 
 # ---------------------------------------------------------------------------
@@ -162,6 +165,7 @@ def evaluate(args):
         "cos_two_stage",
         "cos_disambig",
         "cos_two_stage_description_severity",
+        "cos_static_sev",
     }
     if needs_medoid:
         if not args.medoid_cache or not os.path.exists(args.medoid_cache):
@@ -197,6 +201,7 @@ def evaluate(args):
         "cos_disambig",
         "description_first",
         "cos_two_stage_description_severity",
+        "cos_static_sev",
     }
 
     for action_id, sample in tqdm(samples.items(), desc=f"[{args.strategy}]"):
@@ -325,6 +330,19 @@ def evaluate(args):
                     rag=rag,
                 )
 
+            # ── Row X: cos_static_sev (NEW) ──────────────────────────
+            elif args.strategy == "cos_static_sev":
+                act_idx, sev_idx, raw = run_cos_static_sev(
+                    backend=backend,
+                    frames_per_view=fpv,
+                    law12_ctx=law12_ctx,
+                    medoid_cache=medoid_cache,
+                    severity_priors=severity_priors,
+                    per_action_priors=per_action_priors,
+                    frames_per_view_count=args.frames_per_view,
+                    rag=rag,
+                )
+
             # ── Row 10: description_first (NEW) ────────────────────────
             elif args.strategy == "description_first":
                 act_idx, sev_idx, raw = description_first_strategy.classify(
@@ -424,6 +442,7 @@ def main():
             "cos_disambig",
             "description_first",
             "cos_two_stage_description_severity",
+            "cos_static_sev",
         ],
         help="Ablation strategy to run",
     )

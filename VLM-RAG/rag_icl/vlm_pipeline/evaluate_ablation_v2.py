@@ -99,6 +99,7 @@ from vlm_pipeline.strategies.severity_focused import (
     run_targeted_retrieval,
     run_ordinal_severity,
     run_cos_full_sev,
+    run_cos_static_sev,
     run_cos_two_stage_description_severity,
 )
 from vlm_pipeline.strategies.description_first import DescriptionFirstStrategy
@@ -148,6 +149,7 @@ def evaluate(args):
         "ordinal_severity",
         "cos_full_sev",
         "cos_two_stage_description_severity",
+        "cos_static_sev",
         "description_first",
     }
     if needs_medoid:
@@ -348,6 +350,19 @@ def evaluate(args):
                         frames_per_view=fpv,
                         law12_ctx=law12_ctx,
                         medoid_cache=medoid_cache,
+                        frames_per_view_count=args.frames_per_view,
+                        rag=rag,
+                    )
+
+                # ── Row X: cos_static_sev (NEW) ──────────────────────────
+                elif args.strategy == "cos_static_sev":
+                    act_idx, sev_idx, raw = run_cos_static_sev(
+                        backend=backend,
+                        frames_per_view=fpv,
+                        law12_ctx=law12_ctx,
+                        medoid_cache=medoid_cache,
+                        severity_priors=severity_priors,
+                        per_action_priors=per_action_priors,
                         frames_per_view_count=args.frames_per_view,
                         rag=rag,
                     )

@@ -14,4 +14,5 @@ from .builders import (
     build_targeted_retrieval_prompt,
     build_ordinal_severity_prompt,
     build_cos_action_disambig_prompt,
+    build_cos_static_severity_prompt,
 )
