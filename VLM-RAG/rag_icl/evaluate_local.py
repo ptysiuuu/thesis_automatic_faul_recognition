@@ -104,6 +104,7 @@ from vlm_pipeline.strategies.base import (
     parse_severity_only,
 )
 from vlm_pipeline.strategies.description_first import DescriptionFirstStrategy
+from vlm_pipeline.strategies.severity_focused import run_cos_two_stage_description_severity
 from vlm_pipeline.backends.ollama import OllamaBackend
 
 # ---------------------------------------------------------------------------
@@ -160,6 +161,7 @@ def evaluate(args):
         "two_stage",
         "cos_two_stage",
         "cos_disambig",
+        "cos_two_stage_description_severity",
     }
     if needs_medoid:
         if not args.medoid_cache or not os.path.exists(args.medoid_cache):
@@ -194,6 +196,7 @@ def evaluate(args):
         "cos_two_stage",
         "cos_disambig",
         "description_first",
+        "cos_two_stage_description_severity",
     }
 
     for action_id, sample in tqdm(samples.items(), desc=f"[{args.strategy}]"):
@@ -311,6 +314,17 @@ def evaluate(args):
                     f"STAGE1: {raw1}\nSTAGE2: {raw2}"
                 )
 
+            # ── Row X: cos_two_stage_description_severity (NEW) ───────
+            elif args.strategy == "cos_two_stage_description_severity":
+                act_idx, sev_idx, raw = run_cos_two_stage_description_severity(
+                    backend=backend,
+                    frames_per_view=fpv,
+                    law12_ctx=law12_ctx,
+                    medoid_cache=medoid_cache,
+                    frames_per_view_count=args.frames_per_view,
+                    rag=rag,
+                )
+
             # ── Row 10: description_first (NEW) ────────────────────────
             elif args.strategy == "description_first":
                 act_idx, sev_idx, raw = description_first_strategy.classify(
@@ -409,6 +423,7 @@ def main():
             "cos_two_stage",
             "cos_disambig",
             "description_first",
+            "cos_two_stage_description_severity",
         ],
         help="Ablation strategy to run",
     )

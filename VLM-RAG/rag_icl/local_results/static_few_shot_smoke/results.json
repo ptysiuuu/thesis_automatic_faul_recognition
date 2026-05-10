@@ -8,35 +8,35 @@
       "pred_action": -1,
       "true_severity": 2,
       "pred_severity": -1,
-      "raw_response": "NO FRAMES FOUND"
+      "raw_response": "[ERROR] Ollama request timed out after 180s"
     },
     "1": {
       "true_action": 6,
       "pred_action": -1,
       "true_severity": 1,
       "pred_severity": -1,
-      "raw_response": "NO FRAMES FOUND"
+      "raw_response": "[ERROR] Ollama request timed out after 180s"
     },
     "3": {
       "true_action": 5,
       "pred_action": -1,
       "true_severity": 2,
       "pred_severity": -1,
-      "raw_response": "NO FRAMES FOUND"
+      "raw_response": "[ERROR] Ollama request timed out after 180s"
     },
     "6": {
       "true_action": 5,
       "pred_action": -1,
       "true_severity": 2,
       "pred_severity": -1,
-      "raw_response": "NO FRAMES FOUND"
+      "raw_response": "[ERROR] Ollama request timed out after 180s"
     },
     "7": {
       "true_action": 0,
       "pred_action": -1,
       "true_severity": 2,
       "pred_severity": -1,
-      "raw_response": "NO FRAMES FOUND"
+      "raw_response": "[ERROR] Ollama request timed out after 180s"
     }
   }
 }
