@@ -44,11 +44,12 @@ EVIDENCE_SCHEMA = {
 
 def build_prompt(n_views: int) -> str:
     return f"""
-You are analyzing a football foul from {n_views} camera angles.
+You are analyzing a potential football foul from {n_views} camera angles.
+View 0 is the live broadcast camera. Views 1+ are replay cameras.
 
-Classify the physical evidence. Respond with ONLY this JSON, filling in values from the allowed options:
-
-{{"contact_body_part": "foot|knee|elbow|shoulder|head|hand", "foot_height_at_contact": "ground|ankle|knee|hip|chest|head", "opponent_displacement": "none|stumble|fall|launched", "challenging_player_speed": "slow|medium|fast", "ball_proximity": "on_ball|near|far|no_ball", "contact_location_on_opponent": "leg|body|arm|head", "player_balance_at_contact": "controlled|off_balance|airborne", "vlm_description": "<one sentence>", "extraction_confidence": "high|medium|low"}}"""
+In 2-3 sentences, describe: which player initiates contact, what body part is used,
+where on the opponent contact is made, and what happens to the opponent afterwards.
+Be factual and specific about the physical action."""
 
 
 def safe_parse_json(text: str):
