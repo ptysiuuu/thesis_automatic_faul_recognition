@@ -43,7 +43,16 @@ EVIDENCE_SCHEMA = {
 
 
 def build_prompt(n_views: int) -> str:
-    return f"""Respond with ONLY this JSON object — no other text, no explanation:
+    return f"""
+You are analyzing a potential football foul from {n_views} camera angles.
+View 0 is the live broadcast camera. Views 1+ are replay cameras.
+
+Your task: extract structured physical evidence from the frames.
+Focus on the moment of contact — approach, impact, and aftermath.
+
+Based on what you observe, fill in this evidence form.
+
+Respond with ONLY this JSON:
 {{
   "contact_body_part": "<foot|knee|elbow|shoulder|head|hand>",
   "foot_height_at_contact": "<ground|ankle|knee|hip|chest|head>",
@@ -52,12 +61,9 @@ def build_prompt(n_views: int) -> str:
   "ball_proximity": "<on_ball|near|far|no_ball>",
   "contact_location_on_opponent": "<leg|body|arm|head>",
   "player_balance_at_contact": "<controlled|off_balance|airborne>",
-  "vlm_description": "<2 sentences: what body part contacts where, does opponent fall>",
+  "vlm_description": "<2 sentences describing body mechanics and outcome>",
   "extraction_confidence": "<high|medium|low>"
-}}
-
-You are shown {n_views} camera views of a football foul (approach → contact → aftermath).
-Fill each field based on what you observe at the moment of contact."""
+}}"""
 
 
 def safe_parse_json(text: str):
