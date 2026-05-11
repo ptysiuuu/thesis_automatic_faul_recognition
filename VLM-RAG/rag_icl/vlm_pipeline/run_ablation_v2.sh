@@ -57,7 +57,7 @@ SCRIPT_DIR="/net/tscratch/people/plgaszos/sn-mvfoul/VLM-RAG/rag_icl"
 OUTPUT_DIR="ablation_results_v2/${OUTPUT_SUBDIR}"
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
-conda activate /net/tscratch/people/plgaszos/conda_envs/vlm
+conda activate /net/tscratch/people/plgaszos/conda_envs/vlm32b
 cd "$SCRIPT_DIR"
 
 echo "============================================================"
