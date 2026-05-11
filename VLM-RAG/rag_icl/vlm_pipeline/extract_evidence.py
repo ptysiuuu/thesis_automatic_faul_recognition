@@ -43,13 +43,15 @@ EVIDENCE_SCHEMA = {
 
 
 def build_prompt(n_views: int) -> str:
-    return f"""
-You are analyzing a potential football foul from {n_views} camera angles.
+    return f"""You are analyzing a potential football foul from {n_views} camera angles.
 View 0 is the live broadcast camera. Views 1+ are replay cameras.
 
 In 2-3 sentences, describe: which player initiates contact, what body part is used,
 where on the opponent contact is made, and what happens to the opponent afterwards.
-Be factual and specific about the physical action."""
+Be factual and specific about the physical action.
+
+Respond with ONLY a valid JSON object in this exact format:
+{{"vlm_description": "your 2-3 sentence description goes here"}}"""
 
 
 def safe_parse_json(text: str):
@@ -194,6 +196,7 @@ def main():
                 fout.write(json.dumps(record) + "\n")
                 print(f"Parse failed for {action_id}, saved raw.")
                 continue
+            print(f"DEBUG {action_id}: {parsed}")
 
             # Build final record merging gold labels
             record = {
@@ -202,16 +205,11 @@ def main():
                 "vlm_model": args.model_name,
                 "true_action": sample.get("action"),
                 "true_severity": sample.get("severity"),
+                "vlm_description": (
+                    parsed.get("vlm_description", "") if parsed else raw.strip()
+                ),
+                "extraction_confidence": "high" if parsed else "low",
             }
-            # Copy known schema fields (safe get)
-            for k in EVIDENCE_SCHEMA.keys():
-                record[k] = parsed.get(k)
-
-            # description and confidence
-            record["vlm_description"] = parsed.get("vlm_description", "")
-            record["extraction_confidence"] = parsed.get(
-                "extraction_confidence", "medium"
-            )
 
             fout.write(json.dumps(record) + "\n")
 
