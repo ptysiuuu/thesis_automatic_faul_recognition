@@ -153,6 +153,9 @@ def evaluate(args):
         "cos_full_sev",
         "cos_two_stage_description_severity",
         "cos_static_sev",
+        # new strategies that require medoid anchors
+        "contrastive_severity",
+        "physics_severity",
         "description_first",
     }
     if needs_medoid:
