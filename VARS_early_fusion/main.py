@@ -34,7 +34,13 @@ _TORCHVISION_MODELS = {
     "mvit_v1_b",
     "tadaformer_b16",
 }
-_ALL_MODELS = _TORCHVISION_MODELS | set(HF_VIDEOMAE_REGISTRY.keys())
+HIERA_MODELS = {
+    "hiera_base_16x224",
+    "hiera_base_plus_16x224",
+    "hiera_large_16x224",
+    "hiera_huge_16x224",
+}
+_ALL_MODELS = _TORCHVISION_MODELS | set(HF_VIDEOMAE_REGISTRY.keys()) | HIERA_MODELS
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +69,25 @@ class TAdaFormerTransform:
         self.normalize = transforms.Normalize(
             mean=[0.48145466, 0.4578275, 0.40821073],
             std=[0.26862954, 0.26130258, 0.27577711],
+        )
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [T, C, H, W] in [0, 1]
+        x = self.resize(x)
+        x = self.crop(x)
+        x = self.normalize(x)
+        return x
+
+
+class HieraTransform:
+    """Kinetics-400 normalization used by Hiera video inference."""
+
+    def __init__(self, size: int = 224):
+        self.resize = transforms.Resize(size, antialias=True)
+        self.crop = transforms.CenterCrop(size)
+        self.normalize = transforms.Normalize(
+            mean=[0.45, 0.45, 0.45],
+            std=[0.225, 0.225, 0.255],
         )
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
@@ -213,6 +238,7 @@ def main(args):
         "mvit_v1_b": MViT_V1_B_Weights.KINETICS400_V1.transforms(),
         **{k: _videomae_transform for k in HF_VIDEOMAE_REGISTRY},
         "tadaformer_b16": TAdaFormerTransform(size=224),
+        **{k: HieraTransform(size=224) for k in HIERA_MODELS},
     }
     # Early fusion always uses MViT-v2-S weights transforms (backbone is hardcoded).
     transforms_model = (

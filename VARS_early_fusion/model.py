@@ -34,6 +34,13 @@ HF_VIDEOMAE_REGISTRY = {
     "videomae_large": ("MCG-NJU/videomae-large", 1024),
 }
 
+HIERA_MODELS = {
+    "hiera_base_16x224",
+    "hiera_base_plus_16x224",
+    "hiera_large_16x224",
+    "hiera_huge_16x224",
+}
+
 _VIDEOMAE_V2_KEYS = {
     "videomae2_base",
     "videomae2_large",
@@ -225,6 +232,12 @@ class MVNetwork(torch.nn.Module):
         elif net_name == "mvit_v1_b":
             network = mvit_v1_b(weights=MViT_V1_B_Weights.DEFAULT)
             self.feat_dim = 768
+
+        elif net_name in HIERA_MODELS:
+            from hiera_backbone import HieraBackbone
+
+            network = HieraBackbone(model_name=net_name)
+            self.feat_dim = network.feat_dim
         elif net_name == "tadaformer_b16":
             from tadaformer_backbone import TAdaFormerBackbone
 

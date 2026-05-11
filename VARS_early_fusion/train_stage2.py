@@ -69,6 +69,33 @@ from torchvision.models.video import (
 
 warnings.filterwarnings("ignore", category=UserWarning, module="torchvision")
 
+HIERA_MODELS = {
+    "hiera_base_16x224",
+    "hiera_base_plus_16x224",
+    "hiera_large_16x224",
+    "hiera_huge_16x224",
+}
+
+
+class HieraTransform:
+    """Kinetics-400 normalization used by Hiera video inference."""
+
+    def __init__(self, size: int = 224):
+        self.resize = transforms.Resize(size, antialias=True)
+        self.crop = transforms.CenterCrop(size)
+        self.normalize = transforms.Normalize(
+            mean=[0.45, 0.45, 0.45],
+            std=[0.225, 0.225, 0.255],
+        )
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [T, C, H, W] in [0, 1]
+        x = self.resize(x)
+        x = self.crop(x)
+        x = self.normalize(x)
+        return x
+
+
 _TRANSFORM_MAP = {
     "r3d_18": R3D_18_Weights.KINETICS400_V1.transforms(),
     "mc3_18": MC3_18_Weights.KINETICS400_V1.transforms(),
@@ -77,6 +104,7 @@ _TRANSFORM_MAP = {
     "mvit_v2_s": MViT_V2_S_Weights.KINETICS400_V1.transforms(),
     "mvit_v1_b": MViT_V1_B_Weights.KINETICS400_V1.transforms(),
     **{k: MViT_V2_S_Weights.KINETICS400_V1.transforms() for k in HF_VIDEOMAE_REGISTRY},
+    **{k: HieraTransform(size=224) for k in HIERA_MODELS},
 }
 
 
