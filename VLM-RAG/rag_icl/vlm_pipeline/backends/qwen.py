@@ -75,8 +75,6 @@ class QwenVLBackend:
         self.processor = AutoProcessor.from_pretrained(
             processor_source,
             trust_remote_code=True,
-            min_pixels=64 * 28 * 28,
-            max_pixels=256 * 28 * 28,
         )
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_name,
@@ -120,7 +118,11 @@ class QwenVLBackend:
         img_inputs, vid_inputs, video_kwargs = process_vision_info(
             messages, return_video_kwargs=True
         )
-        video_kwargs = {k: v for k, v in (video_kwargs or {}).items() if not (k == "fps" and isinstance(v, list) and len(v) == 0)}
+        video_kwargs = {
+            k: v
+            for k, v in (video_kwargs or {}).items()
+            if not (k == "fps" and isinstance(v, list) and len(v) == 0)
+        }
         inputs = self.processor(
             text=[text_input],
             images=img_inputs,
