@@ -47,54 +47,21 @@ def build_prompt(n_views: int) -> str:
 You are analyzing a potential football foul from {n_views} camera angles.
 View 0 is the live broadcast camera. Views 1+ are replay cameras.
 
-Based on the frames, answer these questions about the moment of contact.
+Here is an example of the EXACT output format required:
+{{"contact_body_part": "foot", "foot_height_at_contact": "knee", "opponent_displacement": "fall", "challenging_player_speed": "fast", "ball_proximity": "on_ball", "contact_location_on_opponent": "leg", "player_balance_at_contact": "off_balance", "vlm_description": "The challenging player lunges with his right foot at knee height, making contact with the opponent's leg; the opponent falls to the ground.", "extraction_confidence": "high"}}
 
-CONTACT BODY PART (choose exactly one):
-  - foot
-  - knee
-  - elbow
-  - shoulder
-  - head
-  - hand
+Now analyze the incident shown and respond with ONLY a JSON object in the same format.
 
-FOOT HEIGHT AT CONTACT (choose exactly one):
-  - ground
-  - ankle
-  - knee
-  - hip
-  - chest
-  - head
+CONTACT BODY PART (choose exactly one): foot, knee, elbow, shoulder, head, hand
+FOOT HEIGHT AT CONTACT (choose exactly one): ground, ankle, knee, hip, chest, head
+OPPONENT DISPLACEMENT (choose exactly one): none, stumble, fall, launched
+CHALLENGING PLAYER SPEED (choose exactly one): slow, medium, fast
+BALL PROXIMITY (choose exactly one): on_ball, near, far, no_ball
+CONTACT LOCATION ON OPPONENT (choose exactly one): leg, body, arm, head
+PLAYER BALANCE AT CONTACT (choose exactly one): controlled, off_balance, airborne
 
-OPPONENT DISPLACEMENT (choose exactly one):
-  - none
-  - stumble
-  - fall
-  - launched
-
-CHALLENGING PLAYER SPEED (choose exactly one):
-  - slow
-  - medium
-  - fast
-
-BALL PROXIMITY (choose exactly one):
-  - on_ball
-  - near
-  - far
-  - no_ball
-
-CONTACT LOCATION ON OPPONENT (choose exactly one):
-  - leg
-  - body
-  - arm
-  - head
-
-PLAYER BALANCE AT CONTACT (choose exactly one):
-  - controlled
-  - off_balance
-  - airborne
-
-Respond with ONLY this JSON:
-{{"contact_body_part": "<value>", "foot_height_at_contact": "<value>", "opponent_displacement": "<value>", "challenging_player_speed": "<value>", "ball_proximity": "<value>", "contact_location_on_opponent": "<value>", "player_balance_at_contact": "<value>", "vlm_description": "<one sentence>", "extraction_confidence": "<high|medium|low>"}}"""
+Respond with ONLY this JSON — no other text:
+{{"contact_body_part": "...", "foot_height_at_contact": "...", "opponent_displacement": "...", "challenging_player_speed": "...", "ball_proximity": "...", "contact_location_on_opponent": "...", "player_balance_at_contact": "...", "vlm_description": "...", "extraction_confidence": "..."}}"""
 
 
 def safe_parse_json(text: str):
