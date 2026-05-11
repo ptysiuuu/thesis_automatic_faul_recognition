@@ -2,7 +2,7 @@
 # =============================================================================
 # run_ablation_v2.sh — SLURM launcher for evaluate_ablation_v2.py
 #
-# Usage: sbatch run_ablation_v2.sh <strategy> [max_samples] [model_name] [output_subdir]
+# Usage: sbatch run_ablation_v2.sh <strategy> [max_samples] [model_name|alias] [output_subdir]
 #
 # New severity-focused strategies (all use Qwen2.5-VL-7B):
 #   sbatch run_ablation_v2.sh full_sev_two_stage 50      ← smoke test
@@ -19,6 +19,10 @@
 # Existing strategies also work (reproduces old results with new code):
 #   sbatch run_ablation_v2.sh static_few_shot    50
 #   sbatch run_ablation_v2.sh cos_two_stage      50
+#
+# Video / large-model variants:
+#   sbatch run_ablation_v2.sh cos_two_stage 50 native_video
+#   sbatch run_ablation_v2.sh cos_two_stage 50 Qwen/Qwen2.5-VL-32B-Instruct
 # =============================================================================
 #SBATCH --job-name=vlm_v2
 #SBATCH --partition=plgrid-gpu-a100
@@ -39,6 +43,10 @@ STRATEGY="${1:-static_few_shot}"
 MAX_SAMPLES="${2:-}"
 MODEL_NAME="${3:-Qwen/Qwen2.5-VL-7B-Instruct}"
 OUTPUT_SUBDIR="${4:-${STRATEGY}}"
+
+if [[ "$MODEL_NAME" == "native_video" || "$MODEL_NAME" == "video" ]]; then
+    MODEL_NAME="Qwen/Qwen2.5-VL-7B-Instruct-Video"
+fi
 
 DATA_ROOT="/net/tscratch/people/plgaszos/SoccerNet_Data"
 HDF5_ROOT="/net/tscratch/people/plgaszos/SoccerNet_HDF5"
