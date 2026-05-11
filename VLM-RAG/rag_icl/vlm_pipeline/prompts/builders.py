@@ -24,6 +24,8 @@ from .templates import (
     PER_ACTION_PRIOR_TMPL,
     TARGETED_RETRIEVAL_TMPL,
     ORDINAL_SEVERITY_TMPL,
+    CONTRASTIVE_SEVERITY_TMPL,
+    PHYSICS_FLOW_TMPL,
 )
 from ..utils.constants import SEVERITY_CLASSES
 
@@ -303,4 +305,26 @@ def build_cos_static_severity_prompt(
         severity_examples=STATIC_EXAMPLES,
         prior_str=_prior_str(severity_priors),
         severity_list=SEVERITY_LIST_STR,
+    )
+
+
+def build_contrastive_severity_prompt(
+    n_views: int,
+    law12_context: str,
+    action: str,
+    anchor_a_sev: str,
+    anchor_b_sev: str,
+) -> str:
+    return CONTRASTIVE_SEVERITY_TMPL.format(
+        n_views=n_views,
+        law12_context=law12_context,
+        action=action,
+        anchor_a_sev=anchor_a_sev,
+        anchor_b_sev=anchor_b_sev,
+    )
+
+
+def build_physics_flow_prompt(action: str, max_disp: float, severity_list: str) -> str:
+    return PHYSICS_FLOW_TMPL.format(
+        action=action, max_disp=max_disp, severity_list=severity_list
     )

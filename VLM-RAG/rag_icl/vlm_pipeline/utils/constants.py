@@ -86,4 +86,7 @@ ALL_STRATEGIES = [
     "cos_static_sev",  # CoS action + static examples severity (all frames)
     "flow_hard_neg",
     "cos_disambig",
+    # New architectures
+    "contrastive_severity",
+    "physics_severity",
 ]

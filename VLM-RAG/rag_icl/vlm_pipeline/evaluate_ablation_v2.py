@@ -102,6 +102,8 @@ from vlm_pipeline.strategies.severity_focused import (
     run_cos_full_sev,
     run_cos_static_sev,
     run_cos_two_stage_description_severity,
+    run_contrastive_severity,
+    run_physics_severity,
 )
 from vlm_pipeline.strategies.description_first import DescriptionFirstStrategy
 from vlm_pipeline.backends import get_backend
@@ -352,6 +354,30 @@ def evaluate(args):
                         law12_ctx=law12_ctx,
                         medoid_cache=medoid_cache,
                         frames_per_view_count=args.frames_per_view,
+                        rag=rag,
+                    )
+
+                # ── New: contrastive_severity (Architecture 2) ───────────
+                elif args.strategy == "contrastive_severity":
+                    act_idx, sev_idx, raw = run_contrastive_severity(
+                        backend=backend,
+                        frames_per_view=fpv,
+                        law12_ctx=law12_ctx,
+                        medoid_cache=medoid_cache,
+                        severity_priors=severity_priors,
+                        per_action_priors=per_action_priors,
+                        rag=rag,
+                    )
+
+                # ── New: physics_severity (Architecture 3) ──────────────
+                elif args.strategy == "physics_severity":
+                    act_idx, sev_idx, raw = run_physics_severity(
+                        backend=backend,
+                        frames_per_view=fpv,
+                        law12_ctx=law12_ctx,
+                        medoid_cache=medoid_cache,
+                        severity_priors=severity_priors,
+                        per_action_priors=per_action_priors,
                         rag=rag,
                     )
 

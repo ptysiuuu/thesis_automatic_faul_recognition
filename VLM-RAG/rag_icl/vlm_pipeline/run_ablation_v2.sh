@@ -23,6 +23,9 @@
 # Video / large-model variants:
 #   sbatch run_ablation_v2.sh cos_two_stage 50 Qwen/Qwen2.5-VL-7B-Instruct cos2_video video
 #   sbatch run_ablation_v2.sh cos_two_stage 50 Qwen/Qwen2.5-VL-32B-Instruct
+# New strategies examples:
+#   sbatch run_ablation_v2.sh contrastive_severity 50 Qwen/Qwen2.5-VL-7B-Instruct
+#   sbatch run_ablation_v2.sh physics_severity 50 Qwen/Qwen2.5-VL-7B-Instruct
 # =============================================================================
 #SBATCH --job-name=vlm_v2
 #SBATCH --partition=plgrid-gpu-a100

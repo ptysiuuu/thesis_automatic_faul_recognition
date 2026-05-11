@@ -391,3 +391,34 @@ CRITICAL DISTINCTIONS:
 - TACKLING: player SLIDES on the ground to win the BALL.
 
 Final Check: Look closely at the player's hands and feet. If they are grabbing fabric, it is Holding. If they are playing the ball with their foot, it is a Tackle."""
+
+
+# ── NEW: Contrastive severity anchoring prompt ─────────────────────────────────
+CONTRASTIVE_SEVERITY_TMPL = """\
+You are assessing the relative FORCE of a football incident from {n_views} camera angles.
+View 0 is the live broadcast camera. Views 1+ are replay cameras.
+
+{law12_context}
+
+You are shown THREE visual items:
+- Reference example 1 (Example A): an incident labeled as "{anchor_a_sev}" for the action type "{action}".
+- Reference example 2 (Example B): an incident labeled as "{anchor_b_sev}" for the action type "{action}".
+- The TEST CLIP: the new incident to classify (the video frames shown).
+
+Question: The FORCE level in the TEST CLIP is CLOSER to Example 1 or Example 2?
+
+Respond with ONLY this JSON: {{"choice": 1}} or {{"choice": 2}}
+"""
+
+
+# ── NEW: Physics-grounded flow prompt (used when flow-based stats are available)
+PHYSICS_FLOW_TMPL = """\
+You are given a short video clip and a quantitative estimate of opponent displacement
+measured in pixels per frame (max_displacement={max_disp:.2f}).
+
+Use IFAB Law 12 alongside this measurement to decide severity for a "{action}" incident.
+
+Decide severity (one of: {severity_list}) and explain in one sentence referencing the displacement.
+
+Respond with ONLY this JSON: {{"severity": "<severity>", "reasoning": "<one sentence>"}}
+"""

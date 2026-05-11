@@ -66,6 +66,20 @@ from ..retrieval.medoid_cache import (
     build_targeted_examples,
     build_severity_examples,
 )
+from ..utils.constants import SEVERITY_TO_IDX
+from ..prompts.templates import SEVERITY_LIST_STR
+from ..prompts.builders import (
+    build_contrastive_severity_prompt,
+    build_physics_flow_prompt,
+)
+import base64
+import io
+import numpy as _np
+
+try:
+    import cv2
+except Exception:
+    cv2 = None
 
 # ── Row 5: full_sev_two_stage ─────────────────────────────────────────────────
 
@@ -398,6 +412,197 @@ def run_cos_two_stage_description_severity(
         f"STAGE0 (CoS selection): {raw0}\nSelected: {sel_info}\n"
         f"STAGE1 (action): {raw1}\nSTAGE2 (description): {raw_desc}\nSTAGE3 (severity): {raw2}"
     )
+    return act_idx, sev_idx, raw
+
+
+# ── New: Contrastive severity anchoring (Architecture 2) ───────────────────
+def run_contrastive_severity(
+    backend,
+    frames_per_view: List[List[Image.Image]],
+    law12_ctx: str,
+    medoid_cache: dict,
+    severity_priors: dict,
+    per_action_priors: dict,
+    rag,
+) -> Tuple[int, int, str]:
+    """
+    Architecture 2 — Contrastive Severity Anchoring
+
+    Stage 1: predict action (two-stage action prompt)
+    Stage 2: bracketed binary comparisons against medoid anchors for the
+             predicted action. Map binary tournament winner to final severity.
+    """
+    n_views = len(frames_per_view)
+
+    # Stage 1: action classification (reuse two-stage action prompt)
+    all_text, all_imgs = build_examples_text(medoid_cache, n_per_class=1)
+    act_prompt = build_two_stage_action_prompt(
+        n_views=n_views, law12_context=law12_ctx, mined_examples=all_text
+    )
+    raw1 = backend.classify(frames_per_view, act_prompt, extra_images=all_imgs)
+    act_idx = parse_action_only(raw1)
+    act_str = ACTION_CLASSES[act_idx] if act_idx != -1 else "Dont know"
+
+    # Gather anchors for this action from medoid_cache
+    anchors = {}
+    for key, entry in medoid_cache.items():
+        if entry.get("action") != act_str:
+            continue
+        anchors[entry.get("severity")] = entry
+
+    # Severity ladder
+    ladder = ["No offence", "No card", "Yellow card", "Red card"]
+
+    def _get_anchor_image(entry):
+        from PIL import Image as PILImage
+
+        if not entry:
+            return None
+        b64 = entry["frames_b64"][0]
+        return PILImage.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+
+    # Bracket tournament
+    winner = "No offence"
+    for challenger in ["No card", "Yellow card", "Red card"]:
+        anchor_a = _get_anchor_image(anchors.get(winner))
+        anchor_b = _get_anchor_image(anchors.get(challenger))
+
+        # If either anchor is missing, skip this challenger
+        if anchor_a is None or anchor_b is None:
+            # if both missing, skip; if only challenger missing, keep winner
+            continue
+
+        # Build prompt: ask which anchor the TEST CLIP is closer to
+        prompt = build_contrastive_severity_prompt(
+            n_views=n_views,
+            law12_context=law12_ctx,
+            action=act_str,
+            anchor_a_sev=winner,
+            anchor_b_sev=challenger,
+        )
+
+        # Order of extra_images: anchor_a, anchor_b
+        raw = backend.classify(
+            frames_per_view, prompt, extra_images=[anchor_a, anchor_b]
+        )
+
+        # parse simple 'choice' number from response (robust fallback)
+        choice = None
+        try:
+            import json as _json
+
+            j = _json.loads(raw)
+            choice = int(j.get("choice", None))
+        except Exception:
+            txt = raw.strip().lower()
+            if txt.startswith("1"):
+                choice = 1
+            elif txt.startswith("2"):
+                choice = 2
+
+        if choice == 2:
+            winner = challenger
+
+    final_sev = winner
+    sev_idx = SEVERITY_TO_IDX.get(final_sev, -1)
+    raw_summary = f"ACTION: {raw1}\nCONTRASTIVE_TOURNAMENT_WINNER: {final_sev}"
+    return act_idx, sev_idx, raw_summary
+
+
+# ── New: Physics-grounded severity (Architecture 3) ────────────────────────
+def run_physics_severity(
+    backend,
+    frames_per_view: List[List[Image.Image]],
+    law12_ctx: str,
+    medoid_cache: dict,
+    severity_priors: dict,
+    per_action_priors: dict,
+    rag,
+) -> Tuple[int, int, str]:
+    """
+    Architecture 3 — Physics-grounded severity using optical flow statistics.
+
+    Lightweight implementation: compute dense flow between contact frame and
+    aftermath frames, take max displacement as proxy, and map via heuristic
+    thresholds. If OpenCV is not available, fallback to VLM severity.
+    """
+    n_views = len(frames_per_view)
+
+    # Stage 1: action classification (re-use two-stage action)
+    all_text, all_imgs = build_examples_text(medoid_cache, n_per_class=1)
+    act_prompt = build_two_stage_action_prompt(
+        n_views=n_views, law12_context=law12_ctx, mined_examples=all_text
+    )
+    raw1 = backend.classify(frames_per_view, act_prompt, extra_images=all_imgs)
+    act_idx = parse_action_only(raw1)
+    act_str = ACTION_CLASSES[act_idx] if act_idx != -1 else "Dont know"
+
+    # Select contact frame via CoS selection
+    sel_prompt = build_cos_frame_selection_prompt(
+        n_views,
+        frames_per_view_count=(
+            len(frames_per_view[0]) if frames_per_view and frames_per_view[0] else 1
+        ),
+    )
+    raw0 = backend.classify(frames_per_view, sel_prompt)
+    key_idx = parse_key_frames(
+        raw0,
+        n_views,
+        len(frames_per_view[0]) if frames_per_view and frames_per_view[0] else 1,
+    )
+
+    # Compute flow stats across views (if cv2 available)
+    max_disp = 0.0
+    if cv2 is None:
+        # Fallback: ask VLM for severity using full-frame severity prompt
+        sev_examples_text, sev_imgs = build_severity_examples(medoid_cache, act_str)
+        sev_law12 = rag.retrieve(rag.build_query(act_str))
+        per_action = per_action_priors.get(act_str, severity_priors)
+        sev_prompt = build_full_frame_severity_prompt(
+            n_views=n_views,
+            law12_context=sev_law12,
+            predicted_action=act_str,
+            severity_examples=sev_examples_text,
+            severity_priors=per_action,
+        )
+        raw2 = backend.classify(frames_per_view, sev_prompt, extra_images=sev_imgs)
+        sev_idx = parse_severity_only(raw2)
+        return act_idx, sev_idx, f"Fallback VLM severity: {raw2}"
+
+    # Otherwise, compute optical flow between contact frame and last frame per view
+    for v_idx, frames in enumerate(frames_per_view):
+        if not frames:
+            continue
+        contact_i = key_idx[v_idx] if v_idx < len(key_idx) else 0
+        contact_i = max(0, min(contact_i, len(frames) - 1))
+        img0 = _np.array(frames[contact_i].convert("RGB"))
+        img1 = _np.array(frames[-1].convert("RGB"))
+        gray0 = cv2.cvtColor(img0, cv2.COLOR_RGB2GRAY)
+        gray1 = cv2.cvtColor(img1, cv2.COLOR_RGB2GRAY)
+        flow = cv2.calcOpticalFlowFarneback(
+            gray0, gray1, None, 0.5, 3, 15, 3, 5, 1.2, 0
+        )
+        mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+        max_disp = max(max_disp, float(mag.max()))
+
+    # Map displacement to severity via heuristic thresholds (to be trained later)
+    if max_disp < 2.0:
+        final_sev = "No offence"
+    elif max_disp < 6.0:
+        final_sev = "No card"
+    elif max_disp < 12.0:
+        final_sev = "Yellow card"
+    else:
+        final_sev = "Red card"
+
+    sev_idx = SEVERITY_TO_IDX.get(final_sev, -1)
+    # Optionally ask VLM to render a human-readable justification using the flow stat
+    physics_prompt = build_physics_flow_prompt(
+        action=act_str, max_disp=max_disp, severity_list=SEVERITY_LIST_STR
+    )
+    raw_vlm = backend.classify([], physics_prompt)
+    raw = f"FLOW_MAX_DISP: {max_disp:.3f} — VLM_EXPLAIN: {raw_vlm}"
+    return act_idx, sev_idx, raw
     return act_idx, sev_idx, raw
 
 
