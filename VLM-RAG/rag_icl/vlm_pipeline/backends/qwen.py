@@ -53,6 +53,17 @@ class QwenVLBackend:
                     "Install it with `pip install bitsandbytes`."
                 ) from exc
 
+                if not hasattr(torch.nn.Module, "set_submodule"):
+
+                    def _set_submodule(self, target: str, module):
+                        parent_path, _, child_name = target.rpartition(".")
+                        parent = (
+                            self.get_submodule(parent_path) if parent_path else self
+                        )
+                        setattr(parent, child_name, module)
+
+                    torch.nn.Module.set_submodule = _set_submodule
+
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_compute_dtype=torch.bfloat16,
