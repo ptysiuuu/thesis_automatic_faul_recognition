@@ -168,7 +168,7 @@ def evaluate(args):
         retriever = MViTRetriever(args.faiss_index_path, args.faiss_meta_path)
 
     # ── VLM backend ───────────────────────────────────────────────────────────
-    backend = get_backend(args.model_name)
+    backend = get_backend(args.model_name, use_video_mode=args.video_mode)
     description_first_strategy = DescriptionFirstStrategy()
 
     # ── Eval loop ─────────────────────────────────────────────────────────────
@@ -445,6 +445,11 @@ def main():
 
     parser.add_argument("--strategy", choices=ALL_STRATEGIES, default="static_few_shot")
     parser.add_argument("--model_name", default="Qwen/Qwen2.5-VL-7B-Instruct")
+    parser.add_argument(
+        "--video_mode",
+        action="store_true",
+        help="Enable native video inputs for Qwen backends.",
+    )
 
     # Data paths
     parser.add_argument("--hdf5_path")

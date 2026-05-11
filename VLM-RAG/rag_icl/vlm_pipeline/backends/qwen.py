@@ -26,8 +26,11 @@ class QwenVLBackend:
         self,
         model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct",
         quantize_4bit: bool = False,
+        use_video_mode=False,
     ):
         from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+
+        self.use_video_mode = use_video_mode
 
         print(f"[QwenVL] Loading {model_name}...")
 
@@ -70,7 +73,10 @@ class QwenVLBackend:
             )
 
         self.processor = AutoProcessor.from_pretrained(
-            processor_source, trust_remote_code=True
+            processor_source,
+            trust_remote_code=True,
+            min_pixels=64 * 28 * 28,
+            max_pixels=256 * 28 * 28,
         )
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_name,
@@ -98,8 +104,11 @@ class QwenVLBackend:
         for v_idx, frames in enumerate(frames_per_view):
             label = "Live camera" if v_idx == 0 else f"Replay {v_idx}"
             content.append({"type": "text", "text": f"\n[{label}]"})
-            content.append({"type": "video", "video": frames})
-        content.append({"type": "text", "text": f"\n\n{prompt}"})
+            if self.use_video_mode:
+                content.append({"type": "video", "video": frames})
+            else:
+                for frame in frames:
+                    content.append({"type": "image", "image": frame})
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},

@@ -2,7 +2,7 @@
 # =============================================================================
 # run_ablation_v2.sh — SLURM launcher for evaluate_ablation_v2.py
 #
-# Usage: sbatch run_ablation_v2.sh <strategy> [max_samples] [model_name|alias] [output_subdir]
+# Usage: sbatch run_ablation_v2.sh <strategy> [max_samples] [model_name] [output_subdir] [video_flag]
 #
 # New severity-focused strategies (all use Qwen2.5-VL-7B):
 #   sbatch run_ablation_v2.sh full_sev_two_stage 50      ← smoke test
@@ -21,7 +21,7 @@
 #   sbatch run_ablation_v2.sh cos_two_stage      50
 #
 # Video / large-model variants:
-#   sbatch run_ablation_v2.sh cos_two_stage 50 native_video
+#   sbatch run_ablation_v2.sh cos_two_stage 50 Qwen/Qwen2.5-VL-7B-Instruct cos2_video video
 #   sbatch run_ablation_v2.sh cos_two_stage 50 Qwen/Qwen2.5-VL-32B-Instruct
 # =============================================================================
 #SBATCH --job-name=vlm_v2
@@ -43,9 +43,11 @@ STRATEGY="${1:-static_few_shot}"
 MAX_SAMPLES="${2:-}"
 MODEL_NAME="${3:-Qwen/Qwen2.5-VL-7B-Instruct}"
 OUTPUT_SUBDIR="${4:-${STRATEGY}}"
+VIDEO_FLAG="${5:-}"
+VIDEO_MODE=false
 
-if [[ "$MODEL_NAME" == "native_video" || "$MODEL_NAME" == "video" ]]; then
-    MODEL_NAME="Qwen/Qwen2.5-VL-7B-Instruct-Video"
+if [[ "$VIDEO_FLAG" == "video" || "$VIDEO_FLAG" == "native_video" || "$VIDEO_FLAG" == "true" || "$VIDEO_FLAG" == "1" ]]; then
+    VIDEO_MODE=true
 fi
 
 DATA_ROOT="/net/tscratch/people/plgaszos/SoccerNet_Data"
@@ -61,6 +63,7 @@ cd "$SCRIPT_DIR"
 echo "============================================================"
 echo "Strategy:    $STRATEGY"
 echo "Model:       $MODEL_NAME"
+echo "Video mode:  $VIDEO_MODE"
 echo "Max samples: ${MAX_SAMPLES:-all}"
 echo "Output:      $OUTPUT_DIR"
 echo "Script:      evaluate_ablation_v2.py"
@@ -83,6 +86,10 @@ COMMON_ARGS=(
 
 if [ -n "$MAX_SAMPLES" ]; then
     COMMON_ARGS+=(--max_samples "$MAX_SAMPLES")
+fi
+
+if [[ "$VIDEO_MODE" == true ]]; then
+    COMMON_ARGS+=(--video_mode)
 fi
 
 python3 evaluate_ablation_v2.py "${COMMON_ARGS[@]}"

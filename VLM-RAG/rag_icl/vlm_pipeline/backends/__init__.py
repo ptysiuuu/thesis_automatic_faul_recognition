@@ -12,12 +12,16 @@ QWEN3VL_MODELS = {
 QWEN35_MODELS = {"Qwen/Qwen3.5-9B"}
 
 
-def get_backend(model_name: str, enable_thinking: bool = False):
+def get_backend(
+    model_name: str,
+    enable_thinking: bool = False,
+    use_video_mode: bool = False,
+):
     if "-Video" in model_name:
         from .qwen import QwenVLBackend as QwenVideoBackend
 
         clean_name = model_name.replace("-Video", "")
-        return QwenVideoBackend(model_name=clean_name)
+        return QwenVideoBackend(model_name=clean_name, use_video_mode=True)
 
     if model_name in PHI4_MODELS:
         from .phi4 import Phi4VisionBackend
@@ -31,7 +35,11 @@ def get_backend(model_name: str, enable_thinking: bool = False):
 
     if model_name in QWEN25_MODELS:
         quantize_4bit = model_name == "Qwen/Qwen2.5-VL-32B-Instruct"
-        return QwenVLBackend(model_name=model_name, quantize_4bit=quantize_4bit)
+        return QwenVLBackend(
+            model_name=model_name,
+            quantize_4bit=quantize_4bit,
+            use_video_mode=use_video_mode,
+        )
 
     if model_name in QWEN3VL_MODELS:
         from .qwen3vl import Qwen3VLBackend
@@ -43,4 +51,4 @@ def get_backend(model_name: str, enable_thinking: bool = False):
 
         return Qwen35Backend(model_name=model_name, enable_thinking=enable_thinking)
 
-    return QwenVLBackend(model_name=model_name)
+    return QwenVLBackend(model_name=model_name, use_video_mode=use_video_mode)
