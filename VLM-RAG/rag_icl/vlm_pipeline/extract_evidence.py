@@ -60,7 +60,6 @@ You are shown {n_views} camera views of a football foul (approach â†’ contact â†
 Fill each field based on what you observe at the moment of contact."""
 
 
-
 def safe_parse_json(text: str):
     """Try to robustly extract and parse a JSON object from model output."""
     text = text.strip()
@@ -169,10 +168,9 @@ def main():
                 continue
 
             if not fpv:
-                continue
-            prompt = build_prompt(n_views=len(fpv))
                 print(f"Skipping {action_id}: no frames")
                 continue
+            prompt = build_prompt(n_views=len(fpv))
 
             try:
                 raw = backend.classify(fpv, prompt)
