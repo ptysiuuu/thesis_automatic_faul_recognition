@@ -42,38 +42,23 @@ EVIDENCE_SCHEMA = {
 }
 
 
-PROMPT_TMPL = """
-You are an expert video-based assistant that observes short video clips from
-multiple camera angles (approach → contact → aftermath). For the clip shown,
-answer the following in a strict JSON object with ONLY the keys listed below.
-
-Schema keys and allowed values:
-{schema_text}
-
-At the moment of contact, provide concise factual answers. Then add a short
-2-3 sentence factual description in `vlm_description` explaining approach,
-contact and aftermath.
-
-Respond with ONLY a single JSON object. Example:
+def build_prompt(n_views: int) -> str:
+    return f"""Respond with ONLY this JSON object — no other text, no explanation:
 {{
-  "contact_body_part": "foot",
-  "foot_height_at_contact": "knee",
-  "opponent_displacement": "stumble",
-  "challenging_player_speed": "fast",
-  "ball_proximity": "near",
-  "contact_location_on_opponent": "leg",
-  "player_balance_at_contact": "off_balance",
-  "vlm_description": "The tackler lunges quickly, contacts the opponent's leg at knee height; the opponent stumbles backwards and remains on feet.",
-  "extraction_confidence": "high"
+  "contact_body_part": "<foot|knee|elbow|shoulder|head|hand>",
+  "foot_height_at_contact": "<ground|ankle|knee|hip|chest|head>",
+  "opponent_displacement": "<none|stumble|fall|launched>",
+  "challenging_player_speed": "<slow|medium|fast>",
+  "ball_proximity": "<on_ball|near|far|no_ball>",
+  "contact_location_on_opponent": "<leg|body|arm|head>",
+  "player_balance_at_contact": "<controlled|off_balance|airborne>",
+  "vlm_description": "<2 sentences: what body part contacts where, does opponent fall>",
+  "extraction_confidence": "<high|medium|low>"
 }}
-"""
 
+You are shown {n_views} camera views of a football foul (approach → contact → aftermath).
+Fill each field based on what you observe at the moment of contact."""
 
-def build_prompt():
-    schema_text = "\n".join(
-        f"- {k}: {', '.join(v)}" for k, v in EVIDENCE_SCHEMA.items()
-    )
-    return PROMPT_TMPL.format(schema_text=schema_text)
 
 
 def safe_parse_json(text: str):
@@ -148,7 +133,6 @@ def main():
 
     # Start with video mode disabled for initial extraction runs
     backend = get_backend(args.model_name)
-    prompt = build_prompt()
 
     # Resume logic: collect already-processed action_ids from existing file
     processed = set()
@@ -185,6 +169,8 @@ def main():
                 continue
 
             if not fpv:
+                continue
+            prompt = build_prompt(n_views=len(fpv))
                 print(f"Skipping {action_id}: no frames")
                 continue
 
