@@ -44,24 +44,11 @@ EVIDENCE_SCHEMA = {
 
 def build_prompt(n_views: int) -> str:
     return f"""
-You are analyzing a potential football foul from {n_views} camera angles.
-View 0 is the live broadcast camera. Views 1+ are replay cameras.
+You are analyzing a football foul from {n_views} camera angles.
 
-Here is an example of the EXACT output format required:
-{{"contact_body_part": "foot", "foot_height_at_contact": "knee", "opponent_displacement": "fall", "challenging_player_speed": "fast", "ball_proximity": "on_ball", "contact_location_on_opponent": "leg", "player_balance_at_contact": "off_balance", "vlm_description": "The challenging player lunges with his right foot at knee height, making contact with the opponent's leg; the opponent falls to the ground.", "extraction_confidence": "high"}}
+Classify the physical evidence. Respond with ONLY this JSON, filling in values from the allowed options:
 
-Now analyze the incident shown and respond with ONLY a JSON object in the same format.
-
-CONTACT BODY PART (choose exactly one): foot, knee, elbow, shoulder, head, hand
-FOOT HEIGHT AT CONTACT (choose exactly one): ground, ankle, knee, hip, chest, head
-OPPONENT DISPLACEMENT (choose exactly one): none, stumble, fall, launched
-CHALLENGING PLAYER SPEED (choose exactly one): slow, medium, fast
-BALL PROXIMITY (choose exactly one): on_ball, near, far, no_ball
-CONTACT LOCATION ON OPPONENT (choose exactly one): leg, body, arm, head
-PLAYER BALANCE AT CONTACT (choose exactly one): controlled, off_balance, airborne
-
-Respond with ONLY this JSON — no other text:
-{{"contact_body_part": "...", "foot_height_at_contact": "...", "opponent_displacement": "...", "challenging_player_speed": "...", "ball_proximity": "...", "contact_location_on_opponent": "...", "player_balance_at_contact": "...", "vlm_description": "...", "extraction_confidence": "..."}}"""
+{{"contact_body_part": "foot|knee|elbow|shoulder|head|hand", "foot_height_at_contact": "ground|ankle|knee|hip|chest|head", "opponent_displacement": "none|stumble|fall|launched", "challenging_player_speed": "slow|medium|fast", "ball_proximity": "on_ball|near|far|no_ball", "contact_location_on_opponent": "leg|body|arm|head", "player_balance_at_contact": "controlled|off_balance|airborne", "vlm_description": "<one sentence>", "extraction_confidence": "high|medium|low"}}"""
 
 
 def safe_parse_json(text: str):
