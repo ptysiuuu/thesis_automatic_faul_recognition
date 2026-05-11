@@ -83,6 +83,6 @@ if [[ "$VIDEO_MODE" == true ]]; then
     # The extraction script forces use_video_mode internally; keep for clarity
 fi
 
-python3 extract_evidence.py "${COMMON_ARGS[@]}"
+python3 -m vlm_pipeline.extract_evidence "${COMMON_ARGS[@]}"
 
 echo "Done. Results in $OUTPUT_DIR/"
