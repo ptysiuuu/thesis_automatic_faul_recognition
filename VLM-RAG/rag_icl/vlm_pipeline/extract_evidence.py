@@ -47,23 +47,54 @@ def build_prompt(n_views: int) -> str:
 You are analyzing a potential football foul from {n_views} camera angles.
 View 0 is the live broadcast camera. Views 1+ are replay cameras.
 
-Your task: extract structured physical evidence from the frames.
-Focus on the moment of contact — approach, impact, and aftermath.
+Based on the frames, answer these questions about the moment of contact.
 
-Based on what you observe, fill in this evidence form.
+CONTACT BODY PART (choose exactly one):
+  - foot
+  - knee
+  - elbow
+  - shoulder
+  - head
+  - hand
+
+FOOT HEIGHT AT CONTACT (choose exactly one):
+  - ground
+  - ankle
+  - knee
+  - hip
+  - chest
+  - head
+
+OPPONENT DISPLACEMENT (choose exactly one):
+  - none
+  - stumble
+  - fall
+  - launched
+
+CHALLENGING PLAYER SPEED (choose exactly one):
+  - slow
+  - medium
+  - fast
+
+BALL PROXIMITY (choose exactly one):
+  - on_ball
+  - near
+  - far
+  - no_ball
+
+CONTACT LOCATION ON OPPONENT (choose exactly one):
+  - leg
+  - body
+  - arm
+  - head
+
+PLAYER BALANCE AT CONTACT (choose exactly one):
+  - controlled
+  - off_balance
+  - airborne
 
 Respond with ONLY this JSON:
-{{
-  "contact_body_part": "<foot|knee|elbow|shoulder|head|hand>",
-  "foot_height_at_contact": "<ground|ankle|knee|hip|chest|head>",
-  "opponent_displacement": "<none|stumble|fall|launched>",
-  "challenging_player_speed": "<slow|medium|fast>",
-  "ball_proximity": "<on_ball|near|far|no_ball>",
-  "contact_location_on_opponent": "<leg|body|arm|head>",
-  "player_balance_at_contact": "<controlled|off_balance|airborne>",
-  "vlm_description": "<2 sentences describing body mechanics and outcome>",
-  "extraction_confidence": "<high|medium|low>"
-}}"""
+{{"contact_body_part": "<value>", "foot_height_at_contact": "<value>", "opponent_displacement": "<value>", "challenging_player_speed": "<value>", "ball_proximity": "<value>", "contact_location_on_opponent": "<value>", "player_balance_at_contact": "<value>", "vlm_description": "<one sentence>", "extraction_confidence": "<high|medium|low>"}}"""
 
 
 def safe_parse_json(text: str):
