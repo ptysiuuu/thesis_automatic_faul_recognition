@@ -120,7 +120,7 @@ class QwenVLBackend:
         img_inputs, vid_inputs, video_kwargs = process_vision_info(
             messages, return_video_kwargs=True
         )
-        video_kwargs = video_kwargs or {}
+        video_kwargs = {k: v for k, v in (video_kwargs or {}).items() if not (k == "fps" and isinstance(v, list) and len(v) == 0)}
         inputs = self.processor(
             text=[text_input],
             images=img_inputs,
