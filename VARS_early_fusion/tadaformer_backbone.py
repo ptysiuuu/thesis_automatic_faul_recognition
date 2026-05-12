@@ -174,7 +174,7 @@ class TAdaFormerBackbone(nn.Module):
         x = (x - self.norm_mean) / self.norm_std  # apply CLIP norm
         return x
 
-    def forward(self, x: torch.Tensor, return_tokens: bool = False) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_tokens: bool = True) -> torch.Tensor:
         # x: [B, C, T, H, W]
         if x.shape[1] != 3 and x.shape[2] == 3:
             x = x.permute(0, 2, 1, 3, 4).contiguous()
@@ -194,10 +194,10 @@ class TAdaFormerBackbone(nn.Module):
         if return_tokens:
             # Returns CLS token at each temporal step: [B, T', 768]
             # T' = num_frames // TUBLET_STRIDE = 16 // 2 = 8
-            raw = self._vit.forward_wo_head(x)   # [B*T', patches+1, 768]
+            raw = self._vit.forward_wo_head(x)  # [B*T', patches+1, 768]
             T_out = self.num_frames // 2
             tokens = raw[:, 0, :].reshape(B, T_out, self.feat_dim)  # [B, T', 768]
-            tokens = self._vit.ln_post(tokens)   # apply layer norm
+            tokens = self._vit.ln_post(tokens)  # apply layer norm
             return tokens  # [B, 8, 768]
 
         out = self._vit(x)  # [B, 768]
