@@ -122,9 +122,10 @@ def checkArguments(args):
             "bidir_crossattn",
             "dynagat",
             "cva",
+            "mamba",
         ):
             raise ValueError(
-                "--pooling_type must be one of: max, attention, transformer, crossattn, gat, bidir_crossattn"
+                "--pooling_type must be one of: max, attention, transformer, crossattn, gat, bidir_crossattn, dynagat, cva, mamba"
             )
     if args.pre_model not in _ALL_MODELS:
         raise ValueError(f"--pre_model must be one of: {sorted(_ALL_MODELS)}")
@@ -617,7 +618,7 @@ if __name__ == "__main__":
         "--pooling_type",
         default="transformer",
         type=str,
-        help="max | attention | transformer | crossattn | gat (ignored when --fusion_mode)",
+        help="max | attention | transformer | crossattn | gat | bidir_crossattn | dynagat | cva | mamba (ignored when --fusion_mode)",
     )
     parser.add_argument(
         "--use_text_bridge",

@@ -4,6 +4,7 @@ from torch import nn
 from graph import GraphBuilder, GATLayer
 from dynamic_gat import DynamicGATAggregate
 from text_bridge import TextConditionedBridge
+from mamba_aggregate import MVGMNAggregate
 
 
 class SetNorm(nn.Module):
@@ -612,9 +613,18 @@ class MVAggregate(nn.Module):
             )
         elif agr_type == "bidir_crossattn":
             self.aggregation_model = BidirCrossAttentionAggregate(
+                model=model, feat_dim=feat_dim, lifting_net=lifting_net
+            )
+        elif agr_type == "mamba":
+            self.aggregation_model = MVGMNAggregate(
                 model=model,
                 feat_dim=feat_dim,
                 lifting_net=lifting_net,
+                num_blocks=2,
+                num_heads=4,
+                knn_k=3,
+                topology="structured",
+                T_max=8,
             )
         elif agr_type == "dynagat":
             self.aggregation_model = DynamicGATAggregate(
