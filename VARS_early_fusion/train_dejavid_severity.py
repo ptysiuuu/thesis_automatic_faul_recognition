@@ -79,8 +79,10 @@ class TokenBankDataset(Dataset):
             self.targets_sev = targets_sev_raw.argmax(dim=1).long()  # [N]
             self.action_ids = [s.decode() for s in g["action_ids"][:]]
 
-        print(f"[TokenBankDataset] {split}: {len(self.tokens)} samples, "
-              f"token shape={tuple(self.tokens.shape[1:])}")
+        print(
+            f"[TokenBankDataset] {split}: {len(self.tokens)} samples, "
+            f"token shape={tuple(self.tokens.shape[1:])}"
+        )
         counts = torch.bincount(self.targets_sev, minlength=N_SEVERITY)
         for i, name in enumerate(SEVERITY_CLASSES):
             print(f"  {name}: {counts[i].item()}")
@@ -95,8 +97,9 @@ class TokenBankDataset(Dataset):
         counts = torch.bincount(self.targets_sev, minlength=N_SEVERITY).float()
         weights = 1.0 / counts.clamp(min=1)
         sample_weights = weights[self.targets_sev]
-        return WeightedRandomSampler(sample_weights, len(sample_weights),
-                                     replacement=True)
+        return WeightedRandomSampler(
+            sample_weights, len(sample_weights), replacement=True
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -105,9 +108,9 @@ class TokenBankDataset(Dataset):
 
 
 def dtw_distance(
-    weights: torch.Tensor,   # [T_c, D] per-timestep per-feature weights (positive)
+    weights: torch.Tensor,  # [T_c, D] per-timestep per-feature weights (positive)
     centroid: torch.Tensor,  # [T_c, D] centroid TSE
-    sample: torch.Tensor,    # [T_s, D] sample TSE
+    sample: torch.Tensor,  # [T_s, D] sample TSE
 ) -> torch.Tensor:
     """
     Time-weighted DTW distance between centroid and sample.
@@ -122,33 +125,35 @@ def dtw_distance(
 
     # D[i,j] = min warping cost to align centroid[:i+1] with sample[:j+1]
     INF = torch.tensor(1e9, device=centroid.device)
-    D = torch.full((T_c, T_s), float('inf'), device=centroid.device)
+    D = torch.full((T_c, T_s), float("inf"), device=centroid.device)
 
     # Pointwise weighted Manhattan distance: sum(w * |c - s|)
     # Precompute all pairwise distances: [T_c, T_s]
     # weights: [T_c, D], centroid: [T_c, D], sample: [T_s, D]
     w = F.softplus(weights)  # ensure positive
     # Expand for broadcasting: [T_c, 1, D] * |[T_c, 1, D] - [1, T_s, D]|
-    dist_matrix = (w.unsqueeze(1) * (centroid.unsqueeze(1) - sample.unsqueeze(0)).abs()).sum(-1)
+    dist_matrix = (
+        w.unsqueeze(1) * (centroid.unsqueeze(1) - sample.unsqueeze(0)).abs()
+    ).sum(-1)
     # dist_matrix: [T_c, T_s]
 
     # Fill DTW table (no diagonal transitions)
     D[0, 0] = dist_matrix[0, 0]
     for j in range(1, T_s):
-        D[0, j] = D[0, j-1] + dist_matrix[0, j]
+        D[0, j] = D[0, j - 1] + dist_matrix[0, j]
     for i in range(1, T_c):
-        D[i, 0] = D[i-1, 0] + dist_matrix[i, 0]
+        D[i, 0] = D[i - 1, 0] + dist_matrix[i, 0]
     for i in range(1, T_c):
         for j in range(1, T_s):
-            D[i, j] = torch.minimum(D[i-1, j], D[i, j-1]) + dist_matrix[i, j]
+            D[i, j] = torch.minimum(D[i - 1, j], D[i, j - 1]) + dist_matrix[i, j]
 
-    return D[T_c-1, T_s-1]
+    return D[T_c - 1, T_s - 1]
 
 
 def batch_dtw_distances(
-    log_weights: torch.Tensor,   # [N_classes, T_c, D]
-    centroids: torch.Tensor,     # [N_classes, T_c, D]
-    samples: torch.Tensor,       # [B, T_s, D]
+    log_weights: torch.Tensor,  # [N_classes, T_c, D]
+    centroids: torch.Tensor,  # [N_classes, T_c, D]
+    samples: torch.Tensor,  # [B, T_s, D]
 ) -> torch.Tensor:
     """
     Compute DTW distances from each sample to each class centroid.
@@ -162,9 +167,7 @@ def batch_dtw_distances(
 
     for c in range(N_classes):
         for b in range(B):
-            distances[b, c] = dtw_distance(
-                log_weights[c], centroids[c], samples[b]
-            )
+            distances[b, c] = dtw_distance(log_weights[c], centroids[c], samples[b])
     return distances
 
 
@@ -175,8 +178,8 @@ def batch_dtw_distances(
 
 def vectorized_dtw_distance(
     log_weights: torch.Tensor,  # [T_c, D]
-    centroid: torch.Tensor,     # [T_c, D]
-    samples: torch.Tensor,      # [B, T_s, D]
+    centroid: torch.Tensor,  # [T_c, D]
+    samples: torch.Tensor,  # [B, T_s, D]
 ) -> torch.Tensor:
     """
     Vectorized DTW: compute distances from all B samples to one centroid.
@@ -194,9 +197,11 @@ def vectorized_dtw_distance(
     # samples:  [B, T_s, D] → [B, 1, T_s, D]
     # w: [T_c, D] → [1, T_c, 1, D]
     dist_matrix = (
-        w.unsqueeze(0).unsqueeze(2) *
-        (centroid.unsqueeze(0).unsqueeze(2) - samples.unsqueeze(1)).abs()
-    ).sum(-1)  # [B, T_c, T_s]
+        w.unsqueeze(0).unsqueeze(2)
+        * (centroid.unsqueeze(0).unsqueeze(2) - samples.unsqueeze(1)).abs()
+    ).sum(
+        -1
+    )  # [B, T_c, T_s]
 
     # DTW DP: D_table[B, T_c, T_s]
     INF = 1e9
@@ -205,19 +210,19 @@ def vectorized_dtw_distance(
     # Initialize borders
     D_table[:, 0, 0] = dist_matrix[:, 0, 0]
     for j in range(1, T_s):
-        D_table[:, 0, j] = D_table[:, 0, j-1] + dist_matrix[:, 0, j]
+        D_table[:, 0, j] = D_table[:, 0, j - 1] + dist_matrix[:, 0, j]
     for i in range(1, T_c):
-        D_table[:, i, 0] = D_table[:, i-1, 0] + dist_matrix[:, i, 0]
+        D_table[:, i, 0] = D_table[:, i - 1, 0] + dist_matrix[:, i, 0]
 
     # Fill table
     for i in range(1, T_c):
         for j in range(1, T_s):
             D_table[:, i, j] = (
-                torch.minimum(D_table[:, i-1, j], D_table[:, i, j-1])
+                torch.minimum(D_table[:, i - 1, j], D_table[:, i, j - 1])
                 + dist_matrix[:, i, j]
             )
 
-    return D_table[:, T_c-1, T_s-1]  # [B]
+    return D_table[:, T_c - 1, T_s - 1]  # [B]
 
 
 # ---------------------------------------------------------------------------
@@ -252,14 +257,10 @@ class DejaVidSeverityHead(nn.Module):
         self.temperature = nn.Parameter(torch.tensor(temperature))
 
         # Centroids initialized to zero — will be set from training data
-        self.centroids = nn.Parameter(
-            torch.zeros(n_classes, T_c, feat_dim)
-        )
+        self.centroids = nn.Parameter(torch.zeros(n_classes, T_c, feat_dim))
         # Log-weights initialized to zero → softplus(0) = log(2) ≈ 0.693
         # (near-uniform weighting at initialization)
-        self.log_weights = nn.Parameter(
-            torch.zeros(n_classes, T_c, feat_dim)
-        )
+        self.log_weights = nn.Parameter(torch.zeros(n_classes, T_c, feat_dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -272,8 +273,8 @@ class DejaVidSeverityHead(nn.Module):
         for c in range(self.n_classes):
             distances[:, c] = vectorized_dtw_distance(
                 self.log_weights[c],  # [T_c, D]
-                self.centroids[c],    # [T_c, D]
-                x,                    # [B, T_s, D]
+                self.centroids[c],  # [T_c, D]
+                x,  # [B, T_s, D]
             )
 
         # Soft-min: use negative distances as logits, temperature-scaled
@@ -294,10 +295,12 @@ class DejaVidSeverityHead(nn.Module):
                 print(f"  WARNING: No training samples for class {c}")
                 continue
             class_tokens = train_dataset.tokens[mask]  # [N_c, 8, 768]
-            centroid = class_tokens.mean(dim=0)         # [8, 768]
+            centroid = class_tokens.mean(dim=0)  # [8, 768]
             self.centroids.data[c] = centroid
-            print(f"  Class {c} ({SEVERITY_CLASSES[c]}): "
-                  f"{mask.sum().item()} samples → centroid initialized")
+            print(
+                f"  Class {c} ({SEVERITY_CLASSES[c]}): "
+                f"{mask.sum().item()} samples → centroid initialized"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +390,7 @@ def save_predictions(preds, targets, action_ids, split, output_dir):
 
 
 def main(args):
+    os.makedirs(args.model_name, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)-5.5s]  %(message)s",
@@ -396,23 +400,29 @@ def main(args):
         ],
     )
     logger = logging.getLogger(__name__)
-    os.makedirs(args.model_name, exist_ok=True)
 
     device = f"cuda:{args.GPU}" if torch.cuda.is_available() else "cpu"
     logger.info(f"Device: {device}")
 
     # ── Datasets ──────────────────────────────────────────────────────────────
     train_ds = TokenBankDataset(args.feature_bank, "train")
-    val_ds   = TokenBankDataset(args.feature_bank, "valid")
-    test_ds  = TokenBankDataset(args.feature_bank, "test")
+    val_ds = TokenBankDataset(args.feature_bank, "valid")
+    test_ds = TokenBankDataset(args.feature_bank, "test")
 
     sampler = train_ds.get_balanced_sampler()
-    train_dl = DataLoader(train_ds, batch_size=args.batch_size,
-                          sampler=sampler, num_workers=4, pin_memory=True)
-    val_dl   = DataLoader(val_ds, batch_size=256, shuffle=False,
-                          num_workers=2, pin_memory=True)
-    test_dl  = DataLoader(test_ds, batch_size=256, shuffle=False,
-                          num_workers=2, pin_memory=True)
+    train_dl = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        sampler=sampler,
+        num_workers=4,
+        pin_memory=True,
+    )
+    val_dl = DataLoader(
+        val_ds, batch_size=256, shuffle=False, num_workers=2, pin_memory=True
+    )
+    test_dl = DataLoader(
+        test_ds, batch_size=256, shuffle=False, num_workers=2, pin_memory=True
+    )
 
     # ── Model ─────────────────────────────────────────────────────────────────
     model = DejaVidSeverityHead(
@@ -432,11 +442,15 @@ def main(args):
 
     # ── Optimizer ─────────────────────────────────────────────────────────────
     # Centroids and weights have different optimal learning rates per DejaVid paper
-    optimizer = torch.optim.AdamW([
-        {"params": [model.centroids],    "lr": args.LR / 3},   # 1/3 of weight LR
-        {"params": [model.log_weights],  "lr": args.LR},
-        {"params": [model.temperature],  "lr": args.LR / 10},
-    ], betas=(0.9, 0.999), weight_decay=0.0)  # no weight decay per DejaVid
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": [model.centroids], "lr": args.LR / 3},  # 1/3 of weight LR
+            {"params": [model.log_weights], "lr": args.LR},
+            {"params": [model.temperature], "lr": args.LR / 10},
+        ],
+        betas=(0.9, 0.999),
+        weight_decay=0.0,
+    )  # no weight decay per DejaVid
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=args.max_epochs, eta_min=1e-6
@@ -467,18 +481,20 @@ def main(args):
         if val_ba > best_val_ba:
             best_val_ba = val_ba
             no_improve = 0
-            torch.save({
-                "epoch": epoch + 1,
-                "centroids": model.centroids.data,
-                "log_weights": model.log_weights.data,
-                "temperature": model.temperature.data,
-                "val_ba": val_ba,
-            }, os.path.join(args.model_name, "best_dejavid_severity.pth"))
+            torch.save(
+                {
+                    "epoch": epoch + 1,
+                    "centroids": model.centroids.data,
+                    "log_weights": model.log_weights.data,
+                    "temperature": model.temperature.data,
+                    "val_ba": val_ba,
+                },
+                os.path.join(args.model_name, "best_dejavid_severity.pth"),
+            )
             logger.info(f"  ✓ New best val severity BA: {best_val_ba:.2f}%")
 
             # Save valid predictions
-            save_predictions(val_preds, val_targets, val_ids,
-                             "valid", args.model_name)
+            save_predictions(val_preds, val_targets, val_ids, "valid", args.model_name)
         else:
             no_improve += 1
             if no_improve >= args.patience:
@@ -498,14 +514,15 @@ def main(args):
         )
         test_ba = compute_balanced_accuracy(test_preds, test_targets)
         logger.info(f"  TEST   sev_BA={test_ba:.2f}%")
-        save_predictions(test_preds, test_targets, test_ids,
-                         "test", args.model_name)
+        save_predictions(test_preds, test_targets, test_ids, "test", args.model_name)
 
         scheduler.step()
 
     logger.info(f"\nBest valid severity BA: {best_val_ba:.2f}%")
-    logger.info("Done. Use predictions_dejavid_test.json with your action "
-                "model predictions to compute ensemble LB.")
+    logger.info(
+        "Done. Use predictions_dejavid_test.json with your action "
+        "model predictions to compute ensemble LB."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -516,8 +533,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="DejaVid severity head on TAdaFormer temporal tokens"
     )
-    parser.add_argument("--feature_bank", required=True,
-                        help="Path to temporal_tokens_newparams.h5")
+    parser.add_argument(
+        "--feature_bank", required=True, help="Path to temporal_tokens_newparams.h5"
+    )
     parser.add_argument("--model_name", default="VARS_dejavid_severity")
     parser.add_argument("--LR", default=1e-3, type=float)
     parser.add_argument("--max_epochs", default=50, type=int)
