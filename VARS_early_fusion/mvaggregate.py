@@ -585,6 +585,7 @@ class MVAggregate(nn.Module):
             nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1)
         )
         self.fc_handball = nn.Sequential(nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1))
+        from cva_aggregate import CVAAggregate
 
         # --- aggregator ---
         if agr_type == "max":
@@ -623,6 +624,12 @@ class MVAggregate(nn.Module):
                 topology=graph_topology,
                 knn_k=2,
                 knn_temperature=0.1,
+            )
+        elif agr_type == "cva":
+            self.aggregation_model = CVAAggregate(
+                model=model,
+                feat_dim=feat_dim,
+                lifting_net=lifting_net,
             )
         else:
             self.aggregation_model = WeightedAggregate(

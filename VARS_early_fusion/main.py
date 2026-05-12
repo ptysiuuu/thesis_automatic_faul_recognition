@@ -121,6 +121,7 @@ def checkArguments(args):
             "gat",
             "bidir_crossattn",
             "dynagat",
+            "cva",
         ):
             raise ValueError(
                 "--pooling_type must be one of: max, attention, transformer, crossattn, gat, bidir_crossattn"

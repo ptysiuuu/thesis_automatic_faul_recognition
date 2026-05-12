@@ -230,8 +230,15 @@ Based on the key frames, identify the ACTION TYPE.
 ACTION TYPE (choose exactly one):
 {action_list}
 
-Respond with ONLY this JSON:
-{{"action": "<action type>", "reasoning": "<one sentence about body mechanics in key frame>"}}"""
+Before giving your final answer, reason step by step:
+STEP 1 - BODY PART: What body part does the challenging player use? (foot, leg, elbow, arm, hand, shoulder, body)
+STEP 2 - TARGET: What part of the opponent is affected? (legs, body, arm, head/face)
+STEP 3 - BALL: Is the challenging player moving toward the ball or toward the opponent?
+STEP 4 - MOTION: Describe the movement — slide, swing, push, grab, jump, raise leg, fall?
+STEP 5 - ACTION: Based on steps 1-4, which action type fits best?
+
+Respond with ONLY this JSON — the reasoning field must summarize your step-by-step thinking:
+{{"action": "<action type>", "reasoning": "<summary of steps 1-4 leading to this conclusion>"}}"""
 
 # ── Row 4: CoS — stage 2 (severity from key frames) ──────────────────────────
 COS_SEVERITY_TMPL = """\
