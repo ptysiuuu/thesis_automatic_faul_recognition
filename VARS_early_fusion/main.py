@@ -108,6 +108,8 @@ def checkArguments(args):
         raise ValueError("--num_views must be between 1 and 5")
     if args.data_aug not in ("Yes", "No"):
         raise ValueError("--data_aug must be 'Yes' or 'No'")
+    if args.aug_preset not in ("none", "default", "strong"):
+        raise ValueError("--aug_preset must be 'none', 'default', or 'strong'")
     if args.weighted_loss not in ("Yes", "No"):
         raise ValueError("--weighted_loss must be 'Yes' or 'No'")
     if not args.fusion_mode:
@@ -212,7 +214,8 @@ def main(args):
     )
 
     # --- augmentation ---
-    if data_aug == "Yes":
+    aug_preset = args.aug_preset
+    if aug_preset == "default":
         transformAug = transforms.Compose(
             [
                 transforms.RandomAffine(
@@ -224,7 +227,21 @@ def main(args):
                 transforms.RandomHorizontalFlip(),
             ]
         )
-    else:
+    elif aug_preset == "strong":
+        transformAug = transforms.Compose(
+            [
+                transforms.RandomResizedCrop(size=(224, 224), scale=(0.8, 1.0)),
+                transforms.RandomAffine(
+                    degrees=(0, 0), translate=(0.2, 0.2), scale=(0.8, 1.2)
+                ),
+                transforms.RandomPerspective(distortion_scale=0.5, p=0.5),
+                transforms.RandomRotation(degrees=10),
+                transforms.ColorJitter(brightness=0.6, saturation=0.6, contrast=0.6),
+                transforms.RandomHorizontalFlip(),
+                transforms.GaussianBlur(kernel_size=(5, 9), sigma=(0.1, 5)),
+            ]
+        )
+    else:  # aug_preset == "none"
         transformAug = None
 
     # --- backbone-specific transforms ---
@@ -575,6 +592,12 @@ if __name__ == "__main__":
     parser.add_argument("--fps", default=25, type=int)
     parser.add_argument("--num_views", default=5, type=int)
     parser.add_argument("--data_aug", default="Yes", type=str)
+    parser.add_argument(
+        "--aug_preset",
+        default="default",
+        type=str,
+        help="Augmentation preset: 'none' (no augmentation) | 'default' (light-medium augmentation) | 'strong' (strong augmentation with GaussianBlur)",
+    )
 
     # Model
     parser.add_argument(
