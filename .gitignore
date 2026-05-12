@@ -28,3 +28,8 @@ models/
 __pycache__/VARS_model/VARS/
 __pycache__/
 *.pyc
+VARS_early_fusion/EXPLAINABILITY_GUIDE.md
+VARS_early_fusion/SYSTEM_DELIVERY_SUMMARY.md
+.gitignore
+VARS_early_fusion/README_EXPLAINABILITY.md
+VARS_early_fusion/THESIS_INTEGRATION_GUIDE.md

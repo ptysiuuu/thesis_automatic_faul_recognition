@@ -1,0 +1,24 @@
+# VARS Explainability System Requirements
+#
+# Installation:
+#   pip install -r explainability_requirements.txt
+#
+# Core dependencies are already in your environment.
+# These are the additional packages needed for the explainability pipeline.
+
+# LLM Backends (choose at least one)
+google-generativeai>=0.3.0    # For Gemini API (recommended)
+anthropic>=0.7.0               # For Anthropic Claude API (optional)
+
+# Local LLM support (optional, memory-intensive)
+# Uncomment if using local LLMs
+# transformers>=4.30.0
+# accelerate>=0.20.0
+# bitsandbytes>=0.40.0
+
+# Evaluation
+scipy>=1.10.0
+numpy>=1.24.0
+
+# Utilities
+python-dotenv>=1.0.0           # For loading .env with API keys
