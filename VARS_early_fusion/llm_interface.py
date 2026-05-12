@@ -207,6 +207,8 @@ CRITICAL RULES:
 3. Use Law 12 framework: careless (no card) → reckless (yellow) → excessive force (red).
 4. Acknowledge uncertainty explicitly if confidence is LOW or VERY_LOW.
 5. Speak as the referee, not as an observer of a model. Do not say "the model".
+6. You MUST name the specific action type in your first sentence.
+7. You MUST reference the temporal phase and entropy value.
 
 ACTION ASSESSMENT:
 {action_block}

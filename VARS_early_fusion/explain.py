@@ -52,11 +52,20 @@ class EvidenceExtractor:
     - Metadata: action_id, game_id, etc.
     """
 
-    def __init__(self, num_views: int = 5, T_per_view: int = 16, fps: int = 12):
+    def __init__(
+        self,
+        num_views: int = 5,
+        T_per_view: int = 16,
+        fps: int = 12,
+        clip_start_frame: int = 58,
+        clip_end_frame: int = 92,
+    ):
         self.num_views = num_views
         self.T_per_view = T_per_view
         self.fps = fps
         self.num_temporal_tokens = 8  # standard for most backbones
+        self.clip_start_frame = clip_start_frame
+        self.clip_end_frame = clip_end_frame
 
     def extract(
         self,
@@ -126,7 +135,7 @@ class EvidenceExtractor:
             # Predictions
             "action": {
                 "prediction": action_pred[0].item(),
-                "prediction_name": INVERSE_EVENT_DICTIONARY.get(
+                "prediction_name": INVERSE_EVENT_DICTIONARY.get("action_class", {}).get(
                     action_pred[0].item(), "UNKNOWN"
                 ),
                 "logits": action_logits[0].cpu().detach().tolist(),
@@ -135,7 +144,9 @@ class EvidenceExtractor:
                 "top2": {
                     "ids": action_top2_ids[0].cpu().tolist(),
                     "names": [
-                        INVERSE_EVENT_DICTIONARY.get(int(id_), "UNKNOWN")
+                        INVERSE_EVENT_DICTIONARY.get("action_class", {}).get(
+                            int(id_), "UNKNOWN"
+                        )
                         for id_ in action_top2_ids[0]
                     ],
                     "probs": action_top2_probs[0].cpu().detach().tolist(),
@@ -204,28 +215,57 @@ class EvidenceExtractor:
         if attention_weights is None:
             return None
 
-        # Compute frame indices for each temporal token
-        # Assuming evenly spaced temporal tokens across the frame window
-        frame_start = 0  # Parameterize from frame 58 in actual use
-        frame_end = self.T_per_view
-        frames_per_token = frame_end / self.num_temporal_tokens
+        weights = attention_weights.detach()
 
-        token_frames = [
-            int(frame_start + (i + 0.5) * frames_per_token)
-            for i in range(self.num_temporal_tokens)
-        ]
+        # Accept only temporal attention-like tensors [B, V, T].
+        # Some aggregators may return non-temporal attention shapes.
+        if weights.dim() == 2:
+            # [B, T] -> treat as single-view temporal attention
+            weights = weights.unsqueeze(1)
+        elif weights.dim() != 3:
+            return {
+                "has_signal": False,
+                "reason": f"Unsupported attention tensor shape: {tuple(weights.shape)}",
+            }
 
-        B, *dims = attention_weights.shape
+        B, V, T = weights.shape
 
-        # Multi-view case: [B, V, T']
-        if len(dims) == 2:
-            V, T = dims
-            weights = attention_weights[0]  # [V, T']
+        # If attention is transposed as [B, T, V], fix to [B, V, T].
+        if V == self.num_temporal_tokens and T == self.num_views:
+            weights = weights.transpose(1, 2)
+            B, V, T = weights.shape
+
+        # Non-temporal attention (e.g., one scalar per view) is not useful for temporal analysis.
+        if T <= 1:
+            return {
+                "has_signal": False,
+                "reason": f"Attention has only {T} temporal token(s); temporal localization requires >1.",
+            }
+
+        # Map token 0..T-1 to the configured frame range [clip_start_frame, clip_end_frame].
+        if T == 1:
+            token_frames = [self.clip_start_frame]
+        else:
+            token_frames = [
+                int(
+                    round(
+                        self.clip_start_frame
+                        + (i / (T - 1)) * (self.clip_end_frame - self.clip_start_frame)
+                    )
+                )
+                for i in range(T)
+            ]
+
+        # Multi-view temporal case: [B, V, T]
+        if weights.dim() == 3:
+            weights = weights[0]  # [V, T]
 
             # Compute per-view statistics
             view_stats = []
             for v_idx in range(V):
-                w = weights[v_idx]  # [T']
+                w = weights[v_idx]  # [T]
+                # Ensure a proper distribution even if upstream tensor is not perfectly normalized.
+                w = w / (w.sum() + 1e-8)
                 com = (w * torch.arange(T, device=w.device).float()).sum() / w.sum()
                 entropy = -(w * (w + 1e-8).log()).sum().item()
                 peak_token = torch.argmax(w).item()
@@ -244,6 +284,7 @@ class EvidenceExtractor:
 
             # Aggregate across views
             avg_weights = weights.mean(dim=0)
+            avg_weights = avg_weights / (avg_weights.sum() + 1e-8)
             com_agg = (
                 avg_weights * torch.arange(T, device=avg_weights.device).float()
             ).sum() / avg_weights.sum()
@@ -264,12 +305,10 @@ class EvidenceExtractor:
                     "entropy": entropy_agg,
                 },
             }
-        else:
-            # Single-view or no meaningful attention
-            return {
-                "has_signal": False,
-                "reason": "No multi-view attention weights",
-            }
+        return {
+            "has_signal": False,
+            "reason": "No temporal attention weights",
+        }
 
 
 # ============================================================================
@@ -418,6 +457,8 @@ def main(args):
         num_views=args.num_views,
         T_per_view=args.frames_per_view,
         fps=args.fps,
+        clip_start_frame=args.start_frame,
+        clip_end_frame=args.end_frame,
     )
 
     all_evidence = inference_with_signals(
@@ -513,8 +554,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--split", default="test", type=str, choices=["test", "chall", "valid", "train"]
     )
-    parser.add_argument("--start_frame", default=0, type=int)
-    parser.add_argument("--end_frame", default=125, type=int)
+    parser.add_argument("--start_frame", default=58, type=int)
+    parser.add_argument("--end_frame", default=92, type=int)
     parser.add_argument("--fps", default=12, type=int)
     parser.add_argument("--num_views", default=5, type=int)
     parser.add_argument("--frames_per_view", default=16, type=int)

@@ -46,6 +46,8 @@ def main():
     parser.add_argument("--num_views", default=5, type=int)
     parser.add_argument("--frames_per_view", default=16, type=int)
     parser.add_argument("--fps", default=12, type=int)
+    parser.add_argument("--start_frame", default=58, type=int)
+    parser.add_argument("--end_frame", default=92, type=int)
     parser.add_argument("--batch_size", default=1, type=int)
     parser.add_argument("--max_num_worker", default=4, type=int)
 
@@ -142,8 +144,8 @@ def main():
         checkpoint=args.checkpoint,
         num_examples=args.num_examples,
         split=args.split,
-        start_frame=0,
-        end_frame=125,
+        start_frame=args.start_frame,
+        end_frame=args.end_frame,
         fps=args.fps,
         num_views=args.num_views,
         frames_per_view=args.frames_per_view,
