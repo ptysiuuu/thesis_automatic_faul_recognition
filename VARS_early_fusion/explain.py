@@ -121,6 +121,9 @@ class EvidenceExtractor:
         # Temporal attention weights (if available)
         temporal_evidence = None
         if attention_weights is not None:
+            print(f"DEBUG attention_weights shape: {attention_weights.shape}")
+            print(f"DEBUG attention_weights values: {attention_weights}")
+        if attention_weights is not None:
             temporal_evidence = self._process_temporal_attention(
                 attention_weights, is_early_fusion=isinstance(model, EarlyFusionNetwork)
             )
@@ -412,6 +415,8 @@ def main(args):
 
     # ===== Load dataset =====
     logger.info(f"Loading {args.split} split from {args.path}")
+    from main import TAdaFormerTransform
+
     dataset = MultiViewDataset(
         path=args.path,
         split=args.split.capitalize(),
@@ -419,7 +424,7 @@ def main(args):
         start=args.start_frame,
         end=args.end_frame,
         fps=args.fps,
-        transform_model=MViT_V2_S_Weights.KINETICS400_V1.transforms(),
+        transform_model=TAdaFormerTransform(size=224),
         fusion_mode=is_fusion_mode,
     )
 
