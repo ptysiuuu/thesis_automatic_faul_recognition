@@ -574,6 +574,6 @@ class EvidenceInterpreter:
 
         # Confidence caveat
         if confidence_interp["overall_level"] in ("LOW", "VERY_LOW"):
-            parts.append(f"⚠️  Confidence: {confidence_interp['overall_level']}")
+            parts.append(f"Confidence: {confidence_interp['overall_level']}")
 
         return " | ".join(parts)

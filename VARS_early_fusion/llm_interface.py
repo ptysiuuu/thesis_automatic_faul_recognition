@@ -117,58 +117,113 @@ class GeminiInterface(LLMInterface):
     def _build_prompt(self, evidence: Dict, interpreted: Dict) -> str:
         """Construct the prompt for Gemini."""
 
-        action_data = interpreted["action"]
-        severity_data = interpreted["severity"]
-        aux_data = interpreted["auxiliary"]
-        temporal_data = interpreted["temporal"]
-        confidence_data = interpreted["confidence"]
+        # Use evidence for raw numbers and interpreted for higher-level reasoning
+        action_raw = evidence.get("action", {})
+        action_interp = interpreted.get("action", {})
+        severity_raw = evidence.get("severity", {})
+        severity_interp = interpreted.get("severity", {})
+        aux_raw = evidence.get("auxiliary", {})
+        temporal_raw = evidence.get("temporal", {})
+        temporal_interp = interpreted.get("temporal", {})
+        confidence = interpreted.get("confidence", {})
 
-        action_name = action_data["prediction"]
-        action_confidence = action_data["confidence_level"]
+        # Action block
+        action_name = action_raw.get("prediction_name") or action_raw.get("prediction")
+        action_conf = action_raw.get("confidence", 0.0)
+        top2_names = action_raw.get("top2", {}).get("names", [])
+        runner_up = top2_names[1] if len(top2_names) > 1 else "N/A"
 
-        severity_name = severity_data["prediction"]
-        severity_reasoning = severity_data["ordinal_reasoning"]
-
-        temporal_focus = ""
-        if temporal_data["has_signal"]:
-            temporal_focus = f"\n- Temporal Focus: {temporal_data['phase']} phase ({temporal_data['localization_strength']})"
-
-        aux_signals = "\n".join(
-            [f"  • {sig['signal']}: {sig['evidence']}" for sig in aux_data["signals"]]
+        action_block = (
+            f"- Predicted: {action_name} ({action_conf:.1%} confidence)\n"
+            f"- Runner-up: {runner_up}\n"
+            f"- Notes: {action_interp.get('confusion', 'No major confusion') }"
         )
 
-        prompt = f"""You are a football referee assistant explaining a VAR decision on foul recognition and misconduct (Law 12).
+        # Severity block
+        ordinal = severity_raw.get("ordinal_probs", [0.0, 0.0, 0.0])
+        sev_name = severity_interp.get("prediction", severity_raw.get("prediction"))
+        sev_conf = severity_raw.get("confidence", 0.0)
+        severity_block = (
+            f"- Predicted: {sev_name} ({sev_conf:.1%} confidence)\n"
+            f"- Ordinal scores: P(foul)={ordinal[0]:.2f}, P(cardable)={ordinal[1]:.2f}, P(red)={ordinal[2]:.2f}\n"
+            f"- Reasoning: {severity_interp.get('ordinal_reasoning', 'No reasoning available')}\n"
+            f"- {severity_interp.get('borderline_text', '')}"
+        )
 
-Based on the following structured evidence from a multi-view video analysis model, generate a concise referee-style explanation of the decision (3-4 sentences).
+        # Temporal block (prefer interpreted but fall back to raw)
+        temporal_has = temporal_interp.get(
+            "has_signal", temporal_raw.get("has_signal", False)
+        )
+        if temporal_has:
+            # try several possible key names used across modules
+            frame_map = temporal_raw.get(
+                "token_frame_mapping", temporal_raw.get("frame_mapping", {})
+            )
+            peak_token = temporal_interp.get(
+                "peak_token", temporal_raw.get("aggregated", {}).get("peak_token")
+            )
+            peak_frame = frame_map.get(
+                str(peak_token),
+                frame_map.get(
+                    int(peak_token) if peak_token is not None else None, "unknown"
+                ),
+            )
+            temporal_block = (
+                f"- Phase: {temporal_interp.get('phase', 'unknown')} (peak token {peak_token}, frame ~{peak_frame})\n"
+                f"- Localization: entropy={temporal_interp.get('entropy', temporal_raw.get('aggregated', {}).get('entropy', 0.0)):.2f}, COM={temporal_interp.get('center_of_mass', temporal_raw.get('aggregated', {}).get('center_of_mass', 0.0)):.2f}\n"
+                f"- Implications: {temporal_interp.get('phase_implications', temporal_raw.get('aggregated', {}).get('phase_implications', 'None'))}"
+            )
+        else:
+            temporal_block = "- No temporal attention data available."
+
+        # Auxiliary block
+        aux_lines = []
+        for key, val in aux_raw.items():
+            prob = val.get("probability") if isinstance(val, dict) else None
+            evidence_text = (
+                val.get("evidence", "") if isinstance(val, dict) else str(val)
+            )
+            if isinstance(prob, float):
+                aux_lines.append(f"  • {key}: {evidence_text} ({prob:.0%})")
+            else:
+                aux_lines.append(f"  • {key}: {evidence_text}")
+        aux_block = "\n".join(aux_lines) if aux_lines else "No auxiliary signals."
+
+        # Confidence block
+        confidence_block = (
+            f"- Overall: {confidence.get('overall_level', 'unknown')} ({confidence.get('overall_confidence', 0.0):.1%})\n"
+            f"- Action confidence: {confidence.get('action_confidence', 0.0):.1%} \n"
+            f"- Severity confidence: {confidence.get('severity_confidence', 0.0):.1%}\n"
+            f"- Uncertainties: {', '.join(confidence.get('main_uncertainties', []))}"
+        )
+
+        prompt = f"""You are a football referee assistant explaining a VAR decision under FIFA Law 12.
+
+Based on structured evidence from a multi-view video analysis model, generate a 3-4 sentence referee-style explanation.
 
 CRITICAL RULES:
 1. Only refer to information explicitly provided below. Never invent visual observations.
-2. Use the Law 12 framework: careless (no card) → reckless (yellow) → excessive force (red) → violent conduct (red)
-3. Acknowledge uncertainty if the model's confidence is low.
-4. Be direct and speak in a referee's voice.
-5. Do not say "the model thinks" - speak as if you are the referee explaining your decision.
+2. You MUST cite at least two specific numerical values (probabilities, entropy, frame numbers).
+3. Use Law 12 framework: careless (no card) → reckless (yellow) → excessive force (red).
+4. Acknowledge uncertainty explicitly if confidence is LOW or VERY_LOW.
+5. Speak as the referee, not as an observer of a model. Do not say "the model".
 
-PREDICTION SUMMARY:
-- Action: {action_name} (Confidence: {action_confidence})
-- Severity: {severity_name}
+ACTION ASSESSMENT:
+{action_block}
 
-STEP-BY-STEP SEVERITY REASONING:
-{severity_reasoning}
+SEVERITY REASONING:
+{severity_block}
 
 TEMPORAL ANALYSIS:
-{temporal_focus}
+{temporal_block}
 
 PHYSICAL INDICATORS:
-{aux_signals}
+{aux_block}
 
-OVERALL MODEL CONFIDENCE:
-- {confidence_data['overall_text']}
-- Main uncertainties: {', '.join(confidence_data['main_uncertainties'])}
+CONFIDENCE:
+{confidence_block}
 
-CONFUSION (if any):
-- {action_data.get('confusion', 'None')}
-
-Now generate the explanation. Be concise, direct, and ground your decision in the evidence above."""
+Generate the explanation now. It must reference specific numbers and ground the decision in the Law 12 criterion that applies."""
 
         return prompt
 
