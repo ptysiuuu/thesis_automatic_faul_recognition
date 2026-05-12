@@ -178,14 +178,12 @@ def batch_dtw_distances(
 
 def vectorized_dtw_distance(
     log_weights: torch.Tensor,  # [T_c, D]
-    centroid: torch.Tensor,  # [T_c, D]
-    samples: torch.Tensor,  # [B, T_s, D]
+    centroid: torch.Tensor,     # [T_c, D]
+    samples: torch.Tensor,      # [B, T_s, D]
 ) -> torch.Tensor:
     """
     Vectorized DTW: compute distances from all B samples to one centroid.
-    Returns [B] distances.
-
-    Uses sequential DP over T_c * T_s = 64 steps — fast even without CUDA kernel.
+    Returns [B] distances. Uses out-of-place ops for autograd compatibility.
     """
     B, T_s, D = samples.shape
     T_c = centroid.shape[0]
@@ -193,36 +191,41 @@ def vectorized_dtw_distance(
     w = F.softplus(log_weights)  # [T_c, D] positive weights
 
     # Precompute all pairwise distances: [B, T_c, T_s]
-    # centroid: [T_c, D] → [1, T_c, 1, D]
-    # samples:  [B, T_s, D] → [B, 1, T_s, D]
-    # w: [T_c, D] → [1, T_c, 1, D]
     dist_matrix = (
-        w.unsqueeze(0).unsqueeze(2)
-        * (centroid.unsqueeze(0).unsqueeze(2) - samples.unsqueeze(1)).abs()
-    ).sum(
-        -1
-    )  # [B, T_c, T_s]
+        w.unsqueeze(0).unsqueeze(2) *
+        (centroid.unsqueeze(0).unsqueeze(2) - samples.unsqueeze(1)).abs()
+    ).sum(-1)  # [B, T_c, T_s]
 
-    # DTW DP: D_table[B, T_c, T_s]
+    # DTW DP using lists of row tensors — no in-place modification
+    # Each D_row[i] is [B, T_s]
     INF = 1e9
-    D_table = torch.full((B, T_c, T_s), INF, device=samples.device)
 
-    # Initialize borders
-    D_table[:, 0, 0] = dist_matrix[:, 0, 0]
+    # Initialize first row: D[0, j] = sum of dist_matrix[0, 0..j]
+    rows = []
+    first_row_cells = []
+    acc = dist_matrix[:, 0, 0]  # [B]
+    first_row_cells.append(acc)
     for j in range(1, T_s):
-        D_table[:, 0, j] = D_table[:, 0, j - 1] + dist_matrix[:, 0, j]
-    for i in range(1, T_c):
-        D_table[:, i, 0] = D_table[:, i - 1, 0] + dist_matrix[:, i, 0]
+        acc = acc + dist_matrix[:, 0, j]
+        first_row_cells.append(acc)
+    rows.append(torch.stack(first_row_cells, dim=1))  # [B, T_s]
 
-    # Fill table
+    # Fill remaining rows out-of-place
     for i in range(1, T_c):
+        prev_row = rows[i - 1]  # [B, T_s]
+        cells = []
+
+        # D[i, 0] = D[i-1, 0] + dist[i, 0]
+        cells.append(prev_row[:, 0] + dist_matrix[:, i, 0])
+
         for j in range(1, T_s):
-            D_table[:, i, j] = (
-                torch.minimum(D_table[:, i - 1, j], D_table[:, i, j - 1])
-                + dist_matrix[:, i, j]
-            )
+            # min(D[i-1, j], D[i, j-1]) + dist[i, j]
+            min_prev = torch.minimum(prev_row[:, j], cells[j - 1])
+            cells.append(min_prev + dist_matrix[:, i, j])
 
-    return D_table[:, T_c - 1, T_s - 1]  # [B]
+        rows.append(torch.stack(cells, dim=1))  # [B, T_s]
+
+    return rows[-1][:, -1]  # [B] — D[T_c-1, T_s-1]
 
 
 # ---------------------------------------------------------------------------
