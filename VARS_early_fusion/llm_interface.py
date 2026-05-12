@@ -76,7 +76,7 @@ class GeminiInterface(LLMInterface):
             )
 
         self.genai.configure(api_key=key)
-        self.model = self.genai.GenerativeModel("gemini-pro")
+        self.model = self.genai.GenerativeModel("gemini-3.1-flash-lite")
         logger.info("Initialized Gemini API interface")
 
     def generate_explanation(self, evidence: Dict, interpreted: Dict) -> Dict[str, Any]:
