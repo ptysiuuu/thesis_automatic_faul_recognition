@@ -95,6 +95,12 @@ def main():
     parser.add_argument("--use_ema", action="store_true")
     parser.add_argument("--use_tta", action="store_true")
     parser.add_argument("--verbose", "-v", action="store_true")
+    parser.add_argument(
+        "--num_examples",
+        default=None,
+        type=int,
+        help="Maximum number of examples to process (None = all)",
+    )
 
     args = parser.parse_args()
 
@@ -134,6 +140,7 @@ def main():
     explain_args = argparse.Namespace(
         path=args.dataset_path,
         checkpoint=args.checkpoint,
+        num_examples=args.num_examples,
         split=args.split,
         start_frame=0,
         end_frame=125,

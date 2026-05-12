@@ -393,6 +393,22 @@ def main(args):
     )
     logger.info(f"Dataset loaded: {len(dataset)} samples")
 
+    # Optionally limit the number of examples processed (useful for quick tests)
+    if getattr(args, "num_examples", None) is not None and args.num_examples > 0:
+        limit = min(len(dataset), args.num_examples)
+        logger.info(
+            f"Limiting dataset to first {limit} samples (requested {args.num_examples})"
+        )
+        dataset = torch.utils.data.Subset(dataset, list(range(limit)))
+        dataloader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=args.max_num_worker,
+            pin_memory=True,
+        )
+        logger.info(f"Dataset limited: {len(dataset)} samples")
+
     # ===== STAGE 1: Evidence Extraction =====
     logger.info("=" * 70)
     logger.info("STAGE 1: Evidence Extraction")
@@ -546,6 +562,12 @@ if __name__ == "__main__":
 
     # Output
     parser.add_argument("--output_dir", default="./explanations", type=str)
+    parser.add_argument(
+        "--num_examples",
+        default=None,
+        type=int,
+        help="Maximum number of examples to process (None = all)",
+    )
 
     args = parser.parse_args()
     main(args)
