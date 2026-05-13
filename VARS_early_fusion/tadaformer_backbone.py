@@ -174,7 +174,7 @@ class TAdaFormerBackbone(nn.Module):
         x = (x - self.norm_mean) / self.norm_std  # apply CLIP norm
         return x
 
-    def forward(self, x: torch.Tensor, return_tokens: bool = True) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_tokens: bool = False) -> torch.Tensor:
         # x: [B, C, T, H, W]
         if x.shape[1] != 3 and x.shape[2] == 3:
             x = x.permute(0, 2, 1, 3, 4).contiguous()
