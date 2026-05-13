@@ -178,6 +178,7 @@ def main(args):
     uncertainty_weighting = args.uncertainty_weighting
     freeze_epoch = args.freeze_epoch
     use_text_bridge = args.use_text_bridge
+    train_all_but_test = args.train_all_but_test
 
     number_of_frames = int(
         (end_frame - start_frame) / (((end_frame - start_frame) / 25) * fps)
@@ -326,39 +327,93 @@ def main(args):
         dataset_Test = MultiViewDataset(
             **dataset_kwargs, split="Test", num_views=num_views
         )
+        if train_all_but_test:
+            # Combine Train+Valid into one training set, use Test as val proxy
+            from torch.utils.data import ConcatDataset, WeightedRandomSampler
 
-        if balanced_sampler == "Yes":
-            sampler = dataset_Train.get_balanced_sampler()
-            train_loader = torch.utils.data.DataLoader(
-                dataset_Train,
-                batch_size=batch_size,
-                sampler=sampler,
+            dataset_Valid_aug = MultiViewDataset(
+                **dataset_kwargs,
+                split="Valid",
+                num_views=num_views,
+                transform=transformAug,
+            )
+            combined = ConcatDataset([dataset_Train, dataset_Valid_aug])
+
+            if balanced_sampler == "Yes":
+                # Build combined sample weights from severity labels.
+                train_weights = dataset_Train.get_severity_classes()
+                valid_weights = dataset_Valid.get_severity_classes()
+                all_classes = torch.tensor(train_weights + valid_weights)
+                counts = torch.bincount(all_classes)
+                class_weights = 1.0 / counts.float().clamp(min=1)
+                sample_weights = class_weights[all_classes]
+                sampler = WeightedRandomSampler(
+                    sample_weights,
+                    len(sample_weights),
+                    replacement=True,
+                )
+                train_loader = torch.utils.data.DataLoader(
+                    combined,
+                    batch_size=batch_size,
+                    sampler=sampler,
+                    num_workers=max_num_worker,
+                    pin_memory=True,
+                )
+            else:
+                train_loader = torch.utils.data.DataLoader(
+                    combined,
+                    batch_size=batch_size,
+                    shuffle=True,
+                    num_workers=max_num_worker,
+                    pin_memory=True,
+                )
+
+            # Use Test as validation proxy for early stopping
+            val_loader = torch.utils.data.DataLoader(
+                dataset_Test,
+                batch_size=1,
+                shuffle=False,
                 num_workers=max_num_worker,
                 pin_memory=True,
             )
+            test_loader = val_loader  # same loader, evaluated as "test"
+            logging.info(
+                "train_all_but_test: training on Train+Valid, evaluating on Test"
+            )
+
         else:
-            train_loader = torch.utils.data.DataLoader(
-                dataset_Train,
-                batch_size=batch_size,
-                shuffle=True,
+            if balanced_sampler == "Yes":
+                sampler = dataset_Train.get_balanced_sampler()
+                train_loader = torch.utils.data.DataLoader(
+                    dataset_Train,
+                    batch_size=batch_size,
+                    sampler=sampler,
+                    num_workers=max_num_worker,
+                    pin_memory=True,
+                )
+            else:
+                train_loader = torch.utils.data.DataLoader(
+                    dataset_Train,
+                    batch_size=batch_size,
+                    shuffle=True,
+                    num_workers=max_num_worker,
+                    pin_memory=True,
+                )
+
+            val_loader = torch.utils.data.DataLoader(
+                dataset_Valid,
+                batch_size=1,
+                shuffle=False,
                 num_workers=max_num_worker,
                 pin_memory=True,
             )
-
-        val_loader = torch.utils.data.DataLoader(
-            dataset_Valid,
-            batch_size=1,
-            shuffle=False,
-            num_workers=max_num_worker,
-            pin_memory=True,
-        )
-        test_loader = torch.utils.data.DataLoader(
-            dataset_Test,
-            batch_size=1,
-            shuffle=False,
-            num_workers=max_num_worker,
-            pin_memory=True,
-        )
+            test_loader = torch.utils.data.DataLoader(
+                dataset_Test,
+                batch_size=1,
+                shuffle=False,
+                num_workers=max_num_worker,
+                pin_memory=True,
+            )
 
     # --- model ---
     if fusion_mode:
@@ -540,8 +595,10 @@ def main(args):
 
     # --- loss functions ---
     if weighted_loss == "Yes":
+        # Use the Train split class weights even when training on Train+Valid.
+        weights_source = dataset_Train
         criterion_action = nn.CrossEntropyLoss(
-            weight=dataset_Train.getWeights()[1].cuda(),
+            weight=weights_source.getWeights()[1].cuda(),
             label_smoothing=0.1,
         )
     else:
@@ -706,6 +763,12 @@ if __name__ == "__main__":
         default=2,
         type=int,
         help="Gradient accumulation steps (effective batch = batch_size * accum_steps)",
+    )
+    parser.add_argument(
+        "--train_all_but_test",
+        action="store_true",
+        default=False,
+        help="Train on Train+Valid combined, evaluate on Test only",
     )
 
     args = parser.parse_args()

@@ -171,6 +171,8 @@ class TransformerAggregate(nn.Module):
         # Positional embeddings: one per view (max 5) and one per time-step
         self.view_embeds = nn.Parameter(torch.zeros(1, 5, feat_dim))
         self.temporal_embeds = nn.Parameter(torch.zeros(1, T_max, feat_dim))
+        self.live_replay_embed = nn.Embedding(2, feat_dim)
+        nn.init.zeros_(self.live_replay_embed.weight)
 
         # View-quality gating: scalar per view, learned from mean-pooled features
         self.quality_gate = nn.Sequential(
@@ -227,6 +229,11 @@ class TransformerAggregate(nn.Module):
 
         # view padding mask
         view_mask = mvimages.abs().sum(dim=(2, 3, 4, 5)) == 0
+
+        view_ids = torch.ones(V, dtype=torch.long, device=raw.device)  # all replay
+        view_ids[0] = 0  # clip_0 is live camera
+        lr_emb = self.live_replay_embed(view_ids)  # [V, D]
+        raw = raw + lr_emb.unsqueeze(0).unsqueeze(2)  # [B, V, T, D]
 
         # --- Temporal localization: learn which frame matters most ---
         # Returns view-level features [B, V, D] and weights [B, V, T']
