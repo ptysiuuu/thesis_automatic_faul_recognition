@@ -535,6 +535,111 @@ class BidirCrossAttentionAggregate(nn.Module):
         return self.out_proj(fused), attn_weights
 
 
+class AdaptiveHybridPoolAggregate(nn.Module):
+    """
+    Adaptive hybrid pooling aggregator inspired by MVF-2 (SoccerNet 2025 2nd place).
+    Combines max and mean pooling over valid views with a learned gate,
+    handling variable view counts gracefully via masking.
+    """
+
+    def __init__(self, model, feat_dim: int, lifting_net=nn.Sequential()):
+        super().__init__()
+        self.model = model
+        self.lifting_net = lifting_net
+        self.feat_dim = feat_dim
+
+        self.set_norm = SetNorm(feat_dim)
+
+        # Temporal localizer reused from TransformerAggregate
+        self.temporal_localizer = TemporalLocalizer(feat_dim)
+
+        # Quality gate: scalar per view
+        self.quality_gate = nn.Sequential(
+            nn.Linear(feat_dim, feat_dim // 4),
+            nn.ReLU(),
+            nn.Linear(feat_dim // 4, 1),
+            nn.Sigmoid(),
+        )
+
+        # Gate: learns to weight max vs mean contribution per sample
+        self.gate = nn.Sequential(
+            nn.Linear(feat_dim * 2, feat_dim // 2),
+            nn.ReLU(),
+            nn.Linear(feat_dim // 2, 1),
+            nn.Sigmoid(),
+        )
+
+        # Project concatenated [max, mean] → feat_dim
+        self.proj = nn.Linear(feat_dim * 2, feat_dim)
+
+        # Live/replay semantic embedding (same as TransformerAggregate)
+        self.live_replay_embed = nn.Embedding(2, feat_dim)
+        nn.init.zeros_(self.live_replay_embed.weight)
+
+    def forward(self, mvimages: torch.Tensor):
+        B, V, *_ = mvimages.shape
+
+        raw = unbatch_tensor(
+            self.model(batch_tensor(mvimages, dim=1, squeeze=True)),
+            B,
+            dim=1,
+            unsqueeze=True,
+        )
+
+        if raw.dim() == 3:
+            raw = self.lifting_net(raw)
+            raw = raw.unsqueeze(2)
+        T = raw.shape[2]
+
+        # SetNorm
+        raw_flat = raw.flatten(1, 2)
+        raw_flat = self.set_norm(raw_flat)
+        raw = raw_flat.view(B, V, T, -1)
+
+        # View padding mask
+        view_mask = mvimages.abs().sum(dim=(2, 3, 4, 5)) == 0  # [B, V]
+
+        # Live/replay embedding before temporal localizer
+        view_ids = torch.ones(V, dtype=torch.long, device=raw.device)
+        view_ids[0] = 0
+        lr_emb = self.live_replay_embed(view_ids)  # [V, D]
+        raw = raw + lr_emb.unsqueeze(0).unsqueeze(2)
+
+        # Temporal localization → [B, V, D]
+        view_features, temporal_weights = self.temporal_localizer(raw, view_mask)
+
+        # Quality gate
+        quality = self.quality_gate(view_features)  # [B, V, 1]
+        quality = quality.masked_fill(view_mask.unsqueeze(-1), 0.0)
+        view_features = view_features * (0.5 + quality)  # [B, V, D]
+
+        # Zero out padded views
+        view_features = view_features.masked_fill(view_mask.unsqueeze(-1), 0.0)
+
+        # Valid view count per sample
+        valid_counts = (
+            (~view_mask).float().sum(dim=1, keepdim=True).clamp(min=1)
+        )  # [B, 1]
+
+        # Max pooling — set padded views to -inf before max
+        max_input = view_features.masked_fill(view_mask.unsqueeze(-1), float("-inf"))
+        max_feat = max_input.max(dim=1)[0]  # [B, D]
+        max_feat = torch.nan_to_num(max_feat, nan=0.0)
+
+        # Mean pooling — padded views already zeroed
+        mean_feat = view_features.sum(dim=1) / valid_counts  # [B, D]
+
+        # Learned gate: how much to weight max vs mean
+        combined = torch.cat([max_feat, mean_feat], dim=-1)  # [B, 2D]
+        alpha = self.gate(combined)  # [B, 1]
+        fused = alpha * max_feat + (1 - alpha) * mean_feat  # [B, D]
+
+        # Project concatenated features (richer than just fused)
+        output = self.proj(combined)  # [B, D]
+
+        return output, temporal_weights
+
+
 class MVAggregate(nn.Module):
     """
     Multi-view aggregation module with:
@@ -644,6 +749,12 @@ class MVAggregate(nn.Module):
             )
         elif agr_type == "cva":
             self.aggregation_model = CVAAggregate(
+                model=model,
+                feat_dim=feat_dim,
+                lifting_net=lifting_net,
+            )
+        elif agr_type == "hybrid":
+            self.aggregation_model = AdaptiveHybridPoolAggregate(
                 model=model,
                 feat_dim=feat_dim,
                 lifting_net=lifting_net,
