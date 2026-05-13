@@ -569,9 +569,6 @@ class AdaptiveHybridPoolAggregate(nn.Module):
             nn.Sigmoid(),
         )
 
-        # Project concatenated [max, mean] → feat_dim
-        self.proj = nn.Linear(feat_dim * 2, feat_dim)
-
         # Live/replay semantic embedding (same as TransformerAggregate)
         self.live_replay_embed = nn.Embedding(2, feat_dim)
         nn.init.zeros_(self.live_replay_embed.weight)
@@ -624,7 +621,7 @@ class AdaptiveHybridPoolAggregate(nn.Module):
         # Max pooling — set padded views to -inf before max
         max_input = view_features.masked_fill(view_mask.unsqueeze(-1), float("-inf"))
         max_feat = max_input.max(dim=1)[0]  # [B, D]
-        max_feat = torch.nan_to_num(max_feat, nan=0.0)
+        max_feat = torch.nan_to_num(max_feat, nan=0.0, posinf=0.0, neginf=0.0)
 
         # Mean pooling — padded views already zeroed
         mean_feat = view_features.sum(dim=1) / valid_counts  # [B, D]
@@ -634,10 +631,7 @@ class AdaptiveHybridPoolAggregate(nn.Module):
         alpha = self.gate(combined)  # [B, 1]
         fused = alpha * max_feat + (1 - alpha) * mean_feat  # [B, D]
 
-        # Project concatenated features (richer than just fused)
-        output = self.proj(combined)  # [B, D]
-
-        return output, temporal_weights
+        return fused, temporal_weights
 
 
 class MVAggregate(nn.Module):

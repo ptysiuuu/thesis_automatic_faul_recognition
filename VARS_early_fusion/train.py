@@ -245,10 +245,15 @@ def trainer(
     backbone_prefix="aggregation_model.model.",
     freeze_epoch=8,
     uncertainty_weighter=None,
+    val_ann_path=None,
+    train_all_but_test=False,
 ):
     logging.info("start training")
     best_val = 0.0
     no_improve = 0
+
+    if val_ann_path is None:
+        val_ann_path = os.path.join(path_dataset, "Valid", "annotations.json")
 
     for epoch in range(epoch_start, max_epochs):
 
@@ -288,10 +293,11 @@ def trainer(
             accum_steps=accum_steps,
             uncertainty_weighter=uncertainty_weighter,
         )
-        results = evaluate(
-            os.path.join(path_dataset, "Train", "annotations.json"), pred_file
-        )
-        print("TRAINING RESULTS:", results)
+        if not train_all_but_test:
+            results = evaluate(
+                os.path.join(path_dataset, "Train", "annotations.json"), pred_file
+            )
+            print("TRAINING RESULTS:", results)
 
         # --- Validation (with EMA weights) ---
         ema.apply_shadow()
@@ -311,9 +317,7 @@ def trainer(
         )
         ema.restore()
 
-        results = evaluate(
-            os.path.join(path_dataset, "Valid", "annotations.json"), pred_file
-        )
+        results = evaluate(val_ann_path, pred_file)
         print("VALIDATION RESULTS:", results)
 
         val_lb = results.get("leaderboard_value", 0)

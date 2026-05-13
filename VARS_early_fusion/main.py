@@ -631,6 +631,12 @@ def main(args):
         backbone_prefix=backbone_prefix,
         freeze_epoch=freeze_epoch,
         uncertainty_weighter=uncertainty_weighter,
+        val_ann_path=(
+            os.path.join(path, "Test", "annotations.json")
+            if train_all_but_test
+            else os.path.join(path, "Valid", "annotations.json")
+        ),
+        train_all_but_test=train_all_but_test,
     )
     return 0
 
