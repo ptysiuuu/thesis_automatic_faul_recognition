@@ -142,6 +142,8 @@ def checkArguments(args):
         raise ValueError("end_frame - start_frame must be >= 2")
     if not (1 <= args.fps <= 25):
         raise ValueError("--fps must be 1-25")
+    if args.clip_weight < 0:
+        raise ValueError("--clip_weight must be >= 0")
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +182,8 @@ def main(args):
     freeze_epoch = args.freeze_epoch
     use_text_bridge = args.use_text_bridge
     train_all_but_test = args.train_all_but_test
+    clip_weight = args.clip_weight
+    clip_embeddings_path = args.clip_embeddings_path
 
     number_of_frames = int(
         (end_frame - start_frame) / (((end_frame - start_frame) / 25) * fps)
@@ -435,6 +439,7 @@ def main(args):
             graph_topology=graph_topology,
             cascade_severity=cascade_severity,
             use_text_bridge=use_text_bridge,
+            clip_embeddings_path=clip_embeddings_path,
         ).cuda()
         backbone_prefix = "aggregation_model.model."
         logging.info(
@@ -637,6 +642,8 @@ def main(args):
             else os.path.join(path, "Valid", "annotations.json")
         ),
         train_all_but_test=train_all_but_test,
+        clip_weight=clip_weight,
+        clip_embeddings_path=clip_embeddings_path,
     )
     return 0
 
@@ -739,6 +746,18 @@ if __name__ == "__main__":
         default=0.2,
         type=float,
         help="Weight for auxiliary BCE losses (contact, bodypart, etc.)",
+    )
+    parser.add_argument(
+        "--clip_weight",
+        default=0.0,
+        type=float,
+        help="Weight for CLIP severity alignment loss (0 disables)",
+    )
+    parser.add_argument(
+        "--clip_embeddings_path",
+        default="",
+        type=str,
+        help="Path to precomputed CLIP severity embeddings (.pt)",
     )
     parser.add_argument(
         "--ema_decay",

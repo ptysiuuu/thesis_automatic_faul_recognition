@@ -1,6 +1,7 @@
 from utils import batch_tensor, unbatch_tensor
 import torch
 from torch import nn
+import torch.nn.functional as F
 from graph import GraphBuilder, GATLayer
 from dynamic_gat import DynamicGATAggregate
 from text_bridge import TextConditionedBridge
@@ -651,6 +652,7 @@ class MVAggregate(nn.Module):
         graph_topology="structured",
         cascade_severity=False,
         use_text_bridge=False,
+        clip_embeddings_path: str = "",
     ):
         super().__init__()
         self.agr_type = agr_type
@@ -692,6 +694,10 @@ class MVAggregate(nn.Module):
             nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1)
         )
         self.fc_handball = nn.Sequential(nn.LayerNorm(feat_dim), nn.Linear(feat_dim, 1))
+
+        self.clip_proj = None
+        if clip_embeddings_path:
+            self.clip_proj = nn.Linear(feat_dim, 512)
         from cva_aggregate import CVAAggregate
 
         # --- aggregator ---
@@ -762,6 +768,10 @@ class MVAggregate(nn.Module):
         pooled_view, attention = self.aggregation_model(mvimages)
         inter = self.inter(pooled_view)  # [B, feat_dim]
 
+        clip_proj = None
+        if self.clip_proj is not None:
+            clip_proj = F.normalize(self.clip_proj(inter), dim=-1)
+
         pred_action = self.fc_action(inter)  # [B, 8]
 
         if self.cascade_severity:
@@ -776,7 +786,7 @@ class MVAggregate(nn.Module):
         pred_try_to_play = self.fc_try_to_play(inter).squeeze(-1)  # [B]
         pred_handball = self.fc_handball(inter).squeeze(-1)  # [B]
 
-        return (
+        outputs = (
             pred_ordinal_severity,
             pred_action,
             pred_contact,
@@ -785,3 +795,7 @@ class MVAggregate(nn.Module):
             pred_handball,
             attention,
         )
+
+        if clip_proj is None:
+            return outputs
+        return outputs + (clip_proj,)

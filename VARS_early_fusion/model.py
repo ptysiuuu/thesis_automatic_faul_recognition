@@ -182,9 +182,10 @@ class MVNetwork(torch.nn.Module):
     Backbone + multi-view aggregation.
 
     Forward returns:
-      (ordinal_severity_logits [B,3], action_logits [B,8],
-       contact_logit [B], bodypart_logit [B],
-       try_to_play_logit [B], handball_logit [B], attention)
+            (ordinal_severity_logits [B,3], action_logits [B,8],
+             contact_logit [B], bodypart_logit [B],
+             try_to_play_logit [B], handball_logit [B], attention,
+             clip_proj [B,512] if enabled)
     """
 
     def __init__(
@@ -195,6 +196,7 @@ class MVNetwork(torch.nn.Module):
         graph_topology: str = "structured",
         cascade_severity: bool = False,
         use_text_bridge: bool = False,
+        clip_embeddings_path: str = "",
     ):
         super().__init__()
         self.net_name = net_name
@@ -265,6 +267,7 @@ class MVNetwork(torch.nn.Module):
             graph_topology=self.graph_topology,
             cascade_severity=self.cascade_severity,
             use_text_bridge=use_text_bridge,
+            clip_embeddings_path=clip_embeddings_path,
         )
 
     def forward(self, mvimages: torch.Tensor):

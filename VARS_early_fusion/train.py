@@ -9,6 +9,7 @@ from config.classes import INVERSE_EVENT_DICTIONARY
 import json
 import io, contextlib
 from SoccerNet.Evaluation.MV_FoulRecognition import evaluate as _sn_evaluate
+from clip_severity_loss import CLIPSeverityLoss
 
 
 def evaluate(ann_path, pred_file):
@@ -247,6 +248,8 @@ def trainer(
     uncertainty_weighter=None,
     val_ann_path=None,
     train_all_but_test=False,
+    clip_weight=0.0,
+    clip_embeddings_path="",
 ):
     logging.info("start training")
     best_val = 0.0
@@ -254,6 +257,22 @@ def trainer(
 
     if val_ann_path is None:
         val_ann_path = os.path.join(path_dataset, "Valid", "annotations.json")
+
+    clip_loss_fn = None
+    clip_warmup_epochs = 3
+    if clip_weight > 0 and not clip_embeddings_path:
+        logging.warning(
+            "clip_weight > 0 but clip_embeddings_path is empty; CLIP loss disabled."
+        )
+    if clip_weight > 0 and clip_embeddings_path:
+        try:
+            clip_loss_fn = CLIPSeverityLoss(clip_embeddings_path).cuda().eval()
+            logging.info(f"Loaded CLIP severity embeddings from {clip_embeddings_path}")
+        except Exception as exc:
+            logging.warning(
+                f"Failed to load CLIP embeddings from {clip_embeddings_path}: {exc}"
+            )
+            clip_loss_fn = None
 
     for epoch in range(epoch_start, max_epochs):
 
@@ -277,6 +296,10 @@ def trainer(
         print(f"\nEpoch {epoch + 1}/{max_epochs}")
         pbar = tqdm(total=len(train_loader), desc="Training", leave=True)
 
+        clip_weight_epoch = clip_weight
+        if clip_weight > 0 and (epoch + 1) <= clip_warmup_epochs:
+            clip_weight_epoch = 0.0
+
         # --- Train ---
         pred_file, loss_act, loss_sev = _train_epoch(
             train_loader,
@@ -292,6 +315,8 @@ def trainer(
             pbar=pbar,
             accum_steps=accum_steps,
             uncertainty_weighter=uncertainty_weighter,
+            clip_loss_fn=clip_loss_fn,
+            clip_weight=clip_weight_epoch,
         )
         if not train_all_but_test:
             results = evaluate(
@@ -314,6 +339,8 @@ def trainer(
             aux_weight=aux_weight,
             use_tta=use_tta,
             uncertainty_weighter=uncertainty_weighter,
+            clip_loss_fn=None,
+            clip_weight=0.0,
         )
         ema.restore()
 
@@ -363,6 +390,8 @@ def trainer(
             aux_weight=aux_weight,
             use_tta=use_tta,
             uncertainty_weighter=uncertainty_weighter,
+            clip_loss_fn=None,
+            clip_weight=0.0,
         )
         ema.restore()
 
@@ -413,6 +442,8 @@ def _train_epoch(
     pbar=None,
     accum_steps=1,
     uncertainty_weighter=None,
+    clip_loss_fn=None,
+    clip_weight=0.0,
 ):
     if train:
         model.train()
@@ -426,6 +457,8 @@ def _train_epoch(
     actions = {}
     loss_total_act = 0.0
     loss_total_sev = 0.0
+    loss_total_clip = 0.0
+    clip_batches = 0
     n_batches = 0
 
     criterion_action = criterion["action"]
@@ -459,6 +492,7 @@ def _train_epoch(
 
             # --- forward ---
             full_out = None
+            clip_proj = None
             if not train and use_tta:
                 (
                     out_sev,
@@ -475,6 +509,7 @@ def _train_epoch(
                 out_contact, out_bodypart = full_out[2], full_out[3]
                 out_try_to_play, out_handball = full_out[4], full_out[5]
                 attention = full_out[6]
+                clip_proj = full_out[7] if len(full_out) > 7 else None
 
             if train and n_batches % 100 == 0:
                 mvnet = getattr(model, "mvnetwork", None)
@@ -528,6 +563,15 @@ def _train_epoch(
                 temporal_entropy_loss(attention) if train else torch.tensor(0.0)
             )
 
+            loss_clip = None
+            if (
+                train
+                and clip_loss_fn is not None
+                and clip_weight > 0
+                and clip_proj is not None
+            ):
+                loss_clip = clip_loss_fn(clip_proj, labels_int)
+
             if uncertainty_weighter is not None:
                 total_loss = (
                     uncertainty_weighter([loss_sev, loss_act])
@@ -539,6 +583,9 @@ def _train_epoch(
                     loss_sev + loss_act + aux_weight * loss_aux + 0.01 * loss_temporal
                 )
 
+            if loss_clip is not None:
+                total_loss = total_loss + clip_weight * loss_clip
+
             if train:
                 (total_loss / accum_steps).backward()
                 if (n_batches + 1) % accum_steps == 0:
@@ -549,6 +596,9 @@ def _train_epoch(
 
             loss_total_sev += loss_sev.item()
             loss_total_act += loss_act.item()
+            if loss_clip is not None:
+                loss_total_clip += loss_clip.item()
+                clip_batches += 1
             n_batches += 1
 
     gc.collect()
@@ -560,6 +610,9 @@ def _train_epoch(
 
     avg_sev = loss_total_sev / max(n_batches, 1)
     avg_act = loss_total_act / max(n_batches, 1)
+    if train and clip_batches > 0:
+        avg_clip = loss_total_clip / clip_batches
+        logging.info(f"  clip_loss={avg_clip:.4f} (weight={clip_weight:.3f})")
     return prediction_file, avg_act, avg_sev
 
 
