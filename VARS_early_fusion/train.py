@@ -35,7 +35,7 @@ def ordinal_targets(labels_int, num_thresholds=3, device="cpu", smoothing=0.1):
     return targets.to(device)
 
 
-def ordinal_loss(logits, labels_int):
+def ordinal_loss(logits, labels_int, pos_weight=None):
     """
     Cumulative BCE loss for ordinal regression.
     logits : (B, 3)
@@ -44,7 +44,9 @@ def ordinal_loss(logits, labels_int):
     targets = ordinal_targets(
         labels_int, num_thresholds=logits.shape[1], device=logits.device, smoothing=0.1
     )
-    return F.binary_cross_entropy_with_logits(logits, targets)
+    if pos_weight is not None:
+        pos_weight = pos_weight.to(logits.device)
+    return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight)
 
 
 def temporal_entropy_loss(temporal_weights):
@@ -546,7 +548,9 @@ def _train_epoch(
 
             # --- losses ---
             labels_int = targets_sev.argmax(dim=1)
-            loss_sev = ordinal_loss(out_sev, labels_int)
+            loss_sev = ordinal_loss(
+                out_sev, labels_int, pos_weight=criterion.get("ordinal_pos_weight")
+            )
             loss_act = criterion_action(out_act, targets_act)
 
             loss_aux = (

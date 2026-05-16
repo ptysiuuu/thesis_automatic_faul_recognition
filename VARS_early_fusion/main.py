@@ -600,6 +600,22 @@ def main(args):
     )
 
     # --- loss functions ---
+    def _build_ordinal_pos_weight(sev_distribution):
+        sev_distribution = sev_distribution.float().flatten()
+        if sev_distribution.sum() <= 0:
+            return None
+        sev_distribution = sev_distribution / sev_distribution.sum()
+        num_classes = sev_distribution.numel()
+        weights = []
+        for k in range(num_classes - 1):
+            pos = sev_distribution[k + 1 :].sum()
+            neg = sev_distribution[: k + 1].sum()
+            if pos <= 0:
+                weights.append(torch.tensor(1.0))
+            else:
+                weights.append(neg / pos)
+        return torch.stack(weights)
+
     if weighted_loss == "Yes":
         # Use the Train split class weights even when training on Train+Valid.
         weights_source = dataset_Train
@@ -610,9 +626,15 @@ def main(args):
     else:
         criterion_action = nn.CrossEntropyLoss(label_smoothing=0.1)
 
+    severity_dist = dataset_Train.getDistribution()[0]
+    ordinal_pos_weight = _build_ordinal_pos_weight(severity_dist)
+    if ordinal_pos_weight is not None:
+        ordinal_pos_weight = ordinal_pos_weight.cuda()
+
     criterion = {
         "action": criterion_action,
         "bce": nn.BCEWithLogitsLoss(),
+        "ordinal_pos_weight": ordinal_pos_weight,
     }
 
     trainer(
