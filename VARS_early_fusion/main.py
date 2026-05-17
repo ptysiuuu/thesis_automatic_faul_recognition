@@ -611,7 +611,7 @@ def main(args):
             pos = sev_distribution[k + 1 :].sum()
             neg = sev_distribution[: k + 1].sum()
             if pos <= 0:
-                weights.append(torch.tensor(1.0))
+                weights.append((neg / pos).clamp(max=20.0))
             else:
                 weights.append(neg / pos)
         return torch.stack(weights)
