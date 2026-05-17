@@ -26,12 +26,13 @@ from tqdm import tqdm
 # ---------------------------------------------------------------------------
 
 
-def ordinal_targets(labels_int, num_thresholds=3, device="cpu", smoothing=0.1):
+def ordinal_targets(labels_int, num_thresholds=3, device="cpu", smoothing=0.0):
     targets = torch.stack(
         [(labels_int > k).float() for k in range(num_thresholds)], dim=1
     )
-    # Smooth: push 1s down to 0.9, 0s up to 0.1
-    targets = targets * (1 - smoothing) + smoothing * 0.5
+    if smoothing > 0:
+        # Smooth: push 1s down, 0s up
+        targets = targets * (1 - smoothing) + smoothing * 0.5
     return targets.to(device)
 
 
@@ -41,8 +42,12 @@ def ordinal_loss(logits, labels_int, pos_weight=None):
     logits : (B, 3)
     labels_int : (B,) integer 0-3
     """
+    smoothing = 0.0 if pos_weight is not None else 0.1
     targets = ordinal_targets(
-        labels_int, num_thresholds=logits.shape[1], device=logits.device, smoothing=0.1
+        labels_int,
+        num_thresholds=logits.shape[1],
+        device=logits.device,
+        smoothing=smoothing,
     )
     if pos_weight is not None:
         pos_weight = pos_weight.to(logits.device)

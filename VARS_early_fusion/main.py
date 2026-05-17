@@ -616,17 +616,41 @@ def main(args):
                 weights.append(neg / pos)
         return torch.stack(weights)
 
+    combined_sev_dist = None
+    combined_act_dist = None
+    if train_all_but_test:
+        train_sev_dist, train_act_dist = dataset_Train.getDistribution()
+        valid_sev_dist, valid_act_dist = dataset_Valid.getDistribution()
+        n_train = len(dataset_Train)
+        n_valid = len(dataset_Valid)
+        total = n_train + n_valid
+        if total > 0:
+            combined_sev_dist = (
+                train_sev_dist * n_train + valid_sev_dist * n_valid
+            ) / total
+            combined_act_dist = (
+                train_act_dist * n_train + valid_act_dist * n_valid
+            ) / total
+
     if weighted_loss == "Yes":
-        # Use the Train split class weights even when training on Train+Valid.
-        weights_source = dataset_Train
+        if combined_act_dist is not None:
+            action_weights = 1.0 / torch.sqrt(combined_act_dist)
+            action_weights = action_weights / action_weights.mean()
+            weights_source = action_weights
+        else:
+            weights_source = dataset_Train.getWeights()[1]
         criterion_action = nn.CrossEntropyLoss(
-            weight=weights_source.getWeights()[1].cuda(),
+            weight=weights_source.cuda(),
             label_smoothing=0.1,
         )
     else:
         criterion_action = nn.CrossEntropyLoss(label_smoothing=0.1)
 
-    severity_dist = dataset_Train.getDistribution()[0]
+    severity_dist = (
+        combined_sev_dist
+        if combined_sev_dist is not None
+        else dataset_Train.getDistribution()[0]
+    )
     ordinal_pos_weight = _build_ordinal_pos_weight(severity_dist)
     if ordinal_pos_weight is not None:
         ordinal_pos_weight = ordinal_pos_weight.cuda()
