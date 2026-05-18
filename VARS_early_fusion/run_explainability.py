@@ -81,6 +81,18 @@ def main():
         help="Anthropic API key (or set ANTHROPIC_API_KEY env var)",
     )
     parser.add_argument("--llm_temperature", default=0.7, type=float)
+    parser.add_argument(
+        "--use_video",
+        action="store_true",
+        default=True,
+        help="Send video clips to Gemini (native video input, gemini backend only)",
+    )
+    parser.add_argument(
+        "--no_video",
+        dest="use_video",
+        action="store_false",
+        help="Disable video input; send text evidence only",
+    )
 
     # Output
     parser.add_argument("--output_dir", default="./explanations", type=str)
@@ -162,6 +174,7 @@ def main():
         llm_model=args.llm_model,
         llm_temperature=args.llm_temperature,
         gemini_api_key=args.gemini_api_key,
+        use_video=args.use_video,
         output_dir=args.output_dir,
     )
 

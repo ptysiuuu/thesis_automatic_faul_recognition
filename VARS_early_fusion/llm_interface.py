@@ -45,29 +45,26 @@ class GeminiInterface(LLMInterface):
     Gemini API backend for explanation generation.
 
     Requires GOOGLE_API_KEY environment variable or api_key parameter.
-    Uses google-generativeai library.
+    Uses google-genai library (google.genai) with native video input support.
     """
 
-    def __init__(self, api_key: Optional[str] = None, temperature: float = 0.7):
-        """
-        Initialize Gemini interface.
-
-        Args:
-            api_key: Gemini API key (or uses GOOGLE_API_KEY env var)
-            temperature: Sampling temperature for generation
-        """
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        temperature: float = 0.7,
+        use_video: bool = True,
+    ):
         try:
-            import google.generativeai as genai
+            from google import genai
+            from google.genai import types as gtypes
         except ImportError:
-            raise ImportError(
-                "google-generativeai not installed. "
-                "Install with: pip install google-generativeai"
-            )
+            raise ImportError("pip install google-genai")
 
         self.genai = genai
+        self.gtypes = gtypes
         self.temperature = temperature
+        self.use_video = use_video
 
-        # Get API key from parameter or environment
         key = api_key or os.environ.get("GOOGLE_API_KEY")
         if not key:
             raise ValueError(
@@ -75,42 +72,64 @@ class GeminiInterface(LLMInterface):
                 "Pass api_key parameter or set GOOGLE_API_KEY environment variable."
             )
 
-        self.genai.configure(api_key=key)
-        self.model = self.genai.GenerativeModel("gemini-3.1-flash-lite")
-        logger.info("Initialized Gemini API interface")
+        self.client = genai.Client(api_key=key)
+        self.model_name = "gemini-3.1-flash-lite"
+        logger.info(
+            f"Initialized Gemini API interface (model={self.model_name}, use_video={use_video})"
+        )
 
-    def generate_explanation(self, evidence: Dict, interpreted: Dict) -> Dict[str, Any]:
-        """Generate explanation using Gemini API."""
+    def generate_explanation(
+        self,
+        evidence: Dict,
+        interpreted: Dict,
+        video_paths: Optional[list] = None,
+    ) -> Dict[str, Any]:
+        """Generate explanation using Gemini API, optionally with native video input."""
 
-        # Construct the prompt
         prompt = self._build_prompt(evidence, interpreted)
+        parts = []
+
+        if self.use_video and video_paths:
+            for v_idx, vpath in enumerate(video_paths[:4]):
+                if not os.path.exists(vpath):
+                    continue
+                label = "Live camera" if v_idx == 0 else f"Replay {v_idx}"
+                parts.append(self.gtypes.Part(text=f"[{label}]"))
+                video_bytes = open(vpath, "rb").read()
+                parts.append(
+                    self.gtypes.Part(
+                        inline_data=self.gtypes.Blob(
+                            data=video_bytes,
+                            mime_type="video/mp4",
+                        ),
+                        video_metadata=self.gtypes.VideoMetadata(fps=5),
+                    )
+                )
+
+        parts.append(self.gtypes.Part(text=prompt))
 
         try:
-            response = self.model.generate_content(
-                prompt,
-                generation_config=self.genai.types.GenerationConfig(
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=self.gtypes.Content(parts=parts),
+                config=self.gtypes.GenerateContentConfig(
                     temperature=self.temperature,
-                    top_p=0.95,
-                    top_k=40,
-                    max_output_tokens=300,
+                    max_output_tokens=400,
                 ),
             )
 
-            explanation_text = response.text
-
             return {
-                "explanation": explanation_text,
-                "confidence": "high",  # Gemini provides safety ratings; could parse those
-                "model": "gemini-pro",
-                "full_response": str(response),
+                "explanation": response.text,
+                "model": self.model_name,
+                "used_video": self.use_video and bool(video_paths),
             }
 
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
             return {
                 "explanation": "Error generating explanation from Gemini API.",
-                "confidence": "failed",
-                "model": "gemini-pro",
+                "model": self.model_name,
+                "used_video": False,
                 "error": str(e),
             }
 
@@ -515,6 +534,7 @@ def get_llm_interface(
     model: str = "",
     api_key: Optional[str] = None,
     temperature: float = 0.7,
+    use_video: bool = True,
 ) -> LLMInterface:
     """
     Get an LLM interface instance.
@@ -524,13 +544,16 @@ def get_llm_interface(
         model: Model name (required for 'local', optional for others)
         api_key: API key for cloud backends
         temperature: Sampling temperature
+        use_video: Whether to send video clips to Gemini (gemini backend only)
 
     Returns:
         LLMInterface instance
     """
 
     if backend == "gemini":
-        return GeminiInterface(api_key=api_key, temperature=temperature)
+        return GeminiInterface(
+            api_key=api_key, temperature=temperature, use_video=use_video
+        )
 
     elif backend == "anthropic":
         return AnthropicInterface(api_key=api_key, temperature=temperature)

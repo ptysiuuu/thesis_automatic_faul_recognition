@@ -510,14 +510,16 @@ def main(args):
 
         from llm_interface import get_llm_interface
 
+        use_video = getattr(args, "use_video", True) and args.llm_backend == "gemini"
         llm = get_llm_interface(
             backend=args.llm_backend,
             model=args.llm_model,
             api_key=args.gemini_api_key,
             temperature=args.llm_temperature,
+            use_video=use_video,
         )
 
-        logger.info(f"Using LLM backend: {args.llm_backend}")
+        logger.info(f"Using LLM backend: {args.llm_backend} (video={use_video})")
 
         explanations = []
         for i, (evidence, interpreted) in enumerate(
@@ -527,7 +529,20 @@ def main(args):
                 desc="Generating explanations",
             )
         ):
-            explanation = llm.generate_explanation(evidence, interpreted)
+            video_paths = None
+            if use_video:
+                action_id = evidence.get("metadata", {}).get("action_id")
+                if action_id is not None:
+                    clip_dir = os.path.join(
+                        args.path, args.split.capitalize(), f"action_{action_id}"
+                    )
+                    video_paths = [
+                        os.path.join(clip_dir, f"clip_{v}.mp4")
+                        for v in range(args.num_views)
+                        if os.path.exists(os.path.join(clip_dir, f"clip_{v}.mp4"))
+                    ]
+
+            explanation = llm.generate_explanation(evidence, interpreted, video_paths=video_paths)
             explanations.append(explanation)
 
         # Save explanations
@@ -605,6 +620,18 @@ if __name__ == "__main__":
         help="Gemini API key (or use GEMINI_API_KEY env var)",
     )
     parser.add_argument("--llm_temperature", default=0.7, type=float)
+    parser.add_argument(
+        "--use_video",
+        action="store_true",
+        default=True,
+        help="Send video clips to Gemini (native video input, gemini backend only)",
+    )
+    parser.add_argument(
+        "--no_video",
+        dest="use_video",
+        action="store_false",
+        help="Disable video input; send text evidence only",
+    )
 
     # Output
     parser.add_argument("--output_dir", default="./explanations", type=str)
