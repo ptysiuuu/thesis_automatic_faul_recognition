@@ -77,6 +77,49 @@ HIERA_MODELS = {
 }
 
 
+def _load_checkpoint_flexible(model: torch.nn.Module, checkpoint_path: str) -> dict:
+    """
+    Load a checkpoint while skipping keys with missing or mismatched shapes.
+    This avoids hard failures when heads or aggregation layers evolve.
+    """
+    load = torch.load(checkpoint_path, map_location="cpu")
+    state_dict = load.get("state_dict", load)
+    model_state = model.state_dict()
+
+    filtered = {}
+    skipped = []
+    for key, value in state_dict.items():
+        if key in model_state and model_state[key].shape == value.shape:
+            filtered[key] = value
+        else:
+            skipped.append(key)
+
+    incompatible = model.load_state_dict(filtered, strict=False)
+    missing = incompatible.missing_keys
+    unexpected = incompatible.unexpected_keys
+
+    if skipped:
+        logging.warning(
+            "Skipped %d checkpoint keys with mismatched shapes. Example: %s",
+            len(skipped),
+            skipped[0],
+        )
+    if missing:
+        logging.warning(
+            "Missing %d model keys after load. Example: %s",
+            len(missing),
+            missing[0],
+        )
+    if unexpected:
+        logging.warning(
+            "Unexpected %d checkpoint keys after load. Example: %s",
+            len(unexpected),
+            unexpected[0],
+        )
+
+    return load
+
+
 class HieraTransform:
     """Kinetics-400 normalization used by Hiera video inference."""
 
@@ -635,8 +678,7 @@ def main(args):
             cascade_severity=args.cascade_severity,
         ).cuda()
 
-    load = torch.load(args.checkpoint)
-    model.load_state_dict(load["state_dict"])
+    load = _load_checkpoint_flexible(model, args.checkpoint)
     logging.info(
         f"Loaded checkpoint from {args.checkpoint} (epoch {load.get('epoch', '?')})"
     )
