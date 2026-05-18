@@ -223,16 +223,13 @@ class MultiViewDataset(Dataset):
             videos = torch.cat((videos, padding), dim=0)
 
         videos = videos[: self.num_views]
-        videos = videos.permute(
-            0, 2, 1, 3, 4
-        )  # [V, C, T, H, W] — comment kept for compat
-        # Actual layout after this permute is [V, T, C, H, W] (C and T are swapped).
+        # Keep canonical layout: [V, C, T, H, W]
 
         if self.fusion_mode:
-            # Interleave views along time: [V, T, C, H, W] → [C, T*V, H, W]
+            # Interleave views along time: [V, C, T, H, W] -> [C, T*V, H, W]
             # At each timestep t, all V views appear consecutively.
             V_, C_, T_, H_, W_ = videos.shape
-            fused = videos.permute(2, 0, 1, 3, 4)
+            fused = videos.permute(2, 0, 1, 3, 4)  # [T, V, C, H, W]
             fused = fused.reshape(T_ * V_, C_, H_, W_)
             fused = fused.permute(1, 0, 2, 3)
             clip_out = fused
