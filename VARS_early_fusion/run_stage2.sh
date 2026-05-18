@@ -24,7 +24,7 @@ python train_stage2.py \
     --pre_model       tadaformer_b16 \
     --pooling_type    transformer \
     --num_views       5 \
-    --fps             25 \
+    --fps             16 \
     --start_frame     58 \
     --end_frame       92 \
     --n_passes        10 \
