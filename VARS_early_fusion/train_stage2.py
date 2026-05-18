@@ -2,10 +2,10 @@
 """
 Stage-2 feature-bank training for VARS models.
 
-Step 1  (--mode extract):
-  Load a checkpoint, freeze the backbone+aggregator, run the Train split
-  N times with augmentation and Valid/Test once without augmentation, and
-  save all pooled feature vectors to an HDF5 file.
+        Step 1  (--mode extract):
+            Load a checkpoint, freeze the backbone+aggregator, run Train and Valid
+            N times with augmentation, concatenate them into a single "train" bank,
+            and extract Test once clean (used as early-stopping proxy).
 
 Step 2  (--mode train_heads):
   Load the HDF5 bank, train only the inter + fc_* classification heads on
@@ -96,6 +96,25 @@ class HieraTransform:
         return x
 
 
+class TAdaFormerTransform:
+    """CLIP normalization used by TAdaFormer pretraining."""
+
+    def __init__(self, size: int = 224):
+        self.resize = transforms.Resize(size, antialias=True)
+        self.crop = transforms.CenterCrop(size)
+        self.normalize = transforms.Normalize(
+            mean=[0.48145466, 0.4578275, 0.40821073],
+            std=[0.26862954, 0.26130258, 0.27577711],
+        )
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [T, C, H, W] in [0, 1]
+        x = self.resize(x)
+        x = self.crop(x)
+        x = self.normalize(x)
+        return x
+
+
 _TRANSFORM_MAP = {
     "r3d_18": R3D_18_Weights.KINETICS400_V1.transforms(),
     "mc3_18": MC3_18_Weights.KINETICS400_V1.transforms(),
@@ -103,6 +122,7 @@ _TRANSFORM_MAP = {
     "s3d": S3D_Weights.KINETICS400_V1.transforms(),
     "mvit_v2_s": MViT_V2_S_Weights.KINETICS400_V1.transforms(),
     "mvit_v1_b": MViT_V1_B_Weights.KINETICS400_V1.transforms(),
+    "tadaformer_b16": TAdaFormerTransform(size=224),
     **{k: MViT_V2_S_Weights.KINETICS400_V1.transforms() for k in HF_VIDEOMAE_REGISTRY},
     **{k: HieraTransform(size=224) for k in HIERA_MODELS},
 }
@@ -163,7 +183,10 @@ class FeatureBank(Dataset):
             g = f[split]
             self.features = torch.from_numpy(g["features"][:])
             self.targets_sev = torch.from_numpy(g["targets_sev"][:])
-            self.targets_act = torch.from_numpy(g["targets_act"][:]).long()
+            targets_act = torch.from_numpy(g["targets_act"][:])
+            if targets_act.dim() == 2:
+                targets_act = torch.argmax(targets_act, dim=1)
+            self.targets_act = targets_act.long()
             self.targets_contact = torch.from_numpy(g["targets_contact"][:]).float()
             self.targets_bodypart = torch.from_numpy(g["targets_bodypart"][:]).float()
             self.targets_ttp = torch.from_numpy(g["targets_try_to_play"][:]).float()
@@ -262,7 +285,7 @@ def _save_group(hf, name, feats, sevs, acts, contacts, bodyparts, ttps, handball
 def extract(
     model,
     train_loader_aug,
-    val_loader,
+    valid_loader_aug,
     test_loader,
     hdf5_path: str,
     fusion_mode: bool,
@@ -270,20 +293,19 @@ def extract(
 ):
     """
     Run backbone+aggregator on every split, save to hdf5_path.
-    Train split is run n_passes times (different random augmentations each pass).
-    Val and Test are run once without augmentation.
+    Train + Valid are each run n_passes times with augmentation and concatenated
+    into a single "train" bank. Test is run once clean.
     """
     model.eval()
 
     with h5py.File(hdf5_path, "w") as hf:
-        for split, loader in [("valid", val_loader), ("test", test_loader)]:
-            logging.info(f"Extracting {split} (1 pass, no augmentation)...")
-            data = _run_loader(model, loader, fusion_mode)
-            _save_group(hf, split, *data)
-            gc.collect()
-            torch.cuda.empty_cache()
+        logging.info("Extracting test (1 pass, no augmentation)...")
+        data = _run_loader(model, test_loader, fusion_mode)
+        _save_group(hf, "test", *data)
+        gc.collect()
+        torch.cuda.empty_cache()
 
-        logging.info(f"Extracting train ({n_passes} augmented passes)...")
+        logging.info(f"Extracting train+valid ({n_passes} augmented passes each)...")
         all_feats, all_sevs, all_acts = [], [], []
         all_contacts, all_bodyparts, all_ttps, all_handballs, all_ids = (
             [],
@@ -294,17 +316,22 @@ def extract(
         )
         for i in range(n_passes):
             logging.info(f"  Pass {i + 1}/{n_passes}")
-            feats, sevs, acts, contacts, bodyparts, ttps, handballs, ids = _run_loader(
-                model, train_loader_aug, fusion_mode
-            )
-            all_feats.append(feats)
-            all_sevs.append(sevs)
-            all_acts.append(acts)
-            all_contacts.append(contacts)
-            all_bodyparts.append(bodyparts)
-            all_ttps.append(ttps)
-            all_handballs.append(handballs)
-            all_ids.extend(ids)
+            for split_name, loader in (
+                ("train", train_loader_aug),
+                ("valid", valid_loader_aug),
+            ):
+                feats, sevs, acts, contacts, bodyparts, ttps, handballs, ids = (
+                    _run_loader(model, loader, fusion_mode)
+                )
+                all_feats.append(feats)
+                all_sevs.append(sevs)
+                all_acts.append(acts)
+                all_contacts.append(contacts)
+                all_bodyparts.append(bodyparts)
+                all_ttps.append(ttps)
+                all_handballs.append(handballs)
+                all_ids.extend(ids)
+                logging.info(f"    {split_name}: +{len(feats)} samples (augmented)")
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -389,7 +416,9 @@ def _epoch_heads(
             _decode_predictions(preds_sev, preds_act, actions, action_ids)
 
             labels_int = t_sev.argmax(dim=1)
-            loss_sev = ordinal_loss(out_sev, labels_int)
+            loss_sev = ordinal_loss(
+                out_sev, labels_int, pos_weight=criterion.get("ordinal_pos_weight")
+            )
             loss_act = criterion_action(out_act, t_act)
             loss_aux = (
                 criterion_bce(out_contact, t_contact)
@@ -483,7 +512,7 @@ def train_heads(
         )
         ema.restore()
         results = sn_evaluate(
-            os.path.join(path_dataset, "Valid", "annotations.json"), pred_file
+            os.path.join(path_dataset, "Test", "annotations.json"), pred_file
         )
         print("VALID:", results)
 
@@ -639,7 +668,9 @@ def main(args):
         ds_train_aug = MultiViewDataset(
             **ds_kwargs, split="Train", num_views=args.num_views, transform=transformAug
         )
-        ds_val = MultiViewDataset(**ds_kwargs, split="Valid", num_views=args.num_views)
+        ds_valid_aug = MultiViewDataset(
+            **ds_kwargs, split="Valid", num_views=args.num_views, transform=transformAug
+        )
         ds_test = MultiViewDataset(**ds_kwargs, split="Test", num_views=args.num_views)
 
         loader_aug = DataLoader(
@@ -649,10 +680,10 @@ def main(args):
             num_workers=args.max_num_worker,
             pin_memory=True,
         )
-        loader_val = DataLoader(
-            ds_val,
-            batch_size=1,
-            shuffle=False,
+        loader_valid_aug = DataLoader(
+            ds_valid_aug,
+            batch_size=args.batch_size,
+            shuffle=True,
             num_workers=args.max_num_worker,
             pin_memory=True,
         )
@@ -667,14 +698,21 @@ def main(args):
         extract(
             model,
             loader_aug,
-            loader_val,
+            loader_valid_aug,
             loader_test,
             args.feature_bank,
             args.fusion_mode,
             args.n_passes,
         )
 
-        del ds_train_aug, ds_val, ds_test, loader_aug, loader_val, loader_test
+        del (
+            ds_train_aug,
+            ds_valid_aug,
+            ds_test,
+            loader_aug,
+            loader_valid_aug,
+            loader_test,
+        )
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -685,7 +723,7 @@ def main(args):
         heads = HeadsOnly(model, fusion_mode=args.fusion_mode).cuda()
 
         train_ds = FeatureBank(args.feature_bank, "train")
-        val_ds = FeatureBank(args.feature_bank, "valid")
+        val_ds = FeatureBank(args.feature_bank, "test")
         test_ds = FeatureBank(args.feature_bank, "test")
 
         train_dl = DataLoader(
@@ -713,9 +751,31 @@ def main(args):
         act_weights = 1.0 / (act_counts + 1.0)
         act_weights = torch.from_numpy(act_weights / act_weights.sum() * 8).cuda()
 
+        def _build_ordinal_pos_weight(sev_distribution: torch.Tensor):
+            sev_distribution = sev_distribution.float().flatten()
+            if sev_distribution.sum() <= 0:
+                return None
+            sev_distribution = sev_distribution / sev_distribution.sum()
+            num_classes = sev_distribution.numel()
+            weights = []
+            for k in range(num_classes - 1):
+                pos = sev_distribution[k + 1 :].sum()
+                neg = sev_distribution[: k + 1].sum()
+                if pos <= 0:
+                    weights.append((neg / pos).clamp(max=20.0))
+                else:
+                    weights.append(neg / pos)
+            return torch.stack(weights)
+
+        sev_dist = train_ds.targets_sev.float().sum(dim=0)
+        ordinal_pos_weight = _build_ordinal_pos_weight(sev_dist)
+        if ordinal_pos_weight is not None:
+            ordinal_pos_weight = ordinal_pos_weight.cuda()
+
         criterion = {
             "action": nn.CrossEntropyLoss(weight=act_weights, label_smoothing=0.1),
             "bce": nn.BCEWithLogitsLoss(),
+            "ordinal_pos_weight": ordinal_pos_weight,
         }
 
         uncertainty_weighter = None
