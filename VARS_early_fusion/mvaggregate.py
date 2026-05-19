@@ -673,13 +673,10 @@ class MVAggregate(nn.Module):
         self.fc_ordinal_severity = nn.Sequential(
             nn.LayerNorm(sev_in),
             nn.Dropout(p=0.3),
-            nn.Linear(sev_in, feat_dim),  # 768 → 768
+            nn.Linear(sev_in, feat_dim // 2),
             nn.GELU(),
-            nn.Dropout(p=0.2),
-            nn.Linear(feat_dim, feat_dim // 2),  # 768 → 384
-            nn.GELU(),
-            nn.Dropout(p=0.2),
-            nn.Linear(feat_dim // 2, 3),
+            nn.Dropout(p=0.3),
+            nn.Linear(feat_dim // 2, 3),  # 3 cumulative logits
         )
 
         self.fc_action = nn.Sequential(
