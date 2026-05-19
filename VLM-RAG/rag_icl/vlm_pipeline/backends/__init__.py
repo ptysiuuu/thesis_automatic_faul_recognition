@@ -1,5 +1,6 @@
 from .qwen import QwenVLBackend, PROCESSOR_FALLBACK, BASE_PROCESSOR
 from .ollama import OllamaBackend
+from .nvidia_mistral import NvidiaMistralBackend
 
 PHI4_MODELS = {"microsoft/Phi-4-reasoning-vision-15B"}
 INTERNVL_MODELS = {"OpenGVLab/InternVL3-8B", "OpenGVLab/InternVL3-14B"}
@@ -10,6 +11,9 @@ QWEN3VL_MODELS = {
     "Qwen/Qwen3-VL-4B-Instruct",
 }
 QWEN35_MODELS = {"Qwen/Qwen3.5-9B"}
+NVIDIA_MODELS = {
+    "mistralai/mistral-large-3-675b-instruct-2512",
+}
 
 
 def get_backend(
@@ -17,6 +21,19 @@ def get_backend(
     enable_thinking: bool = False,
     use_video_mode: bool = False,
 ):
+    lower_name = model_name.lower()
+    if lower_name.startswith("nvidia:") or lower_name.startswith("nvidia/"):
+        clean_name = model_name.split(":", 1)[-1]
+        if clean_name.startswith("nvidia/"):
+            clean_name = clean_name.split("/", 1)[-1]
+        return NvidiaMistralBackend(model_name=clean_name)
+
+    if lower_name in {"mistral_nvidia", "nvidia_mistral"}:
+        return NvidiaMistralBackend()
+
+    if model_name in NVIDIA_MODELS:
+        return NvidiaMistralBackend(model_name=model_name)
+
     if "-Video" in model_name:
         from .qwen import QwenVLBackend as QwenVideoBackend
 

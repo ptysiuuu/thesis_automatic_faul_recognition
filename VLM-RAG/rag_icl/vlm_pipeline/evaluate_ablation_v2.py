@@ -46,8 +46,8 @@ from tqdm import tqdm
 import torch
 import h5py
 
-# Add parent dir to path so vlm_pipeline is importable
-sys.path.insert(0, str(Path(__file__).parent))
+# Add rag_icl root to path so vlm_pipeline is importable
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vlm_pipeline.utils import (
     load_annotations,
@@ -55,6 +55,7 @@ from vlm_pipeline.utils import (
     compute_severity_priors,
     compute_per_action_severity_priors,
     extract_all_views,
+    extract_all_views_from_video,
     parse_key_frames,
     select_key_frames,
     format_selected_frame_info,
@@ -111,6 +112,19 @@ from vlm_pipeline.backends import get_backend
 # ---------------------------------------------------------------------------
 # Evaluation loop
 # ---------------------------------------------------------------------------
+
+
+def _infer_split(annotations_path: str, default: str = "valid") -> str:
+    p = (annotations_path or "").lower()
+    if "train" in p:
+        return "train"
+    if "valid" in p or "val" in p:
+        return "valid"
+    if "test" in p:
+        return "test"
+    if "chall" in p:
+        return "chall"
+    return default
 
 
 def evaluate(args):
@@ -180,8 +194,13 @@ def evaluate(args):
     y_true_a, y_pred_a = [], []
     y_true_s, y_pred_s = [], []
     predictions = {}
+    split = args.split or _infer_split(args.annotations)
 
-    with h5py.File(args.hdf5_path, "r", swmr=True) as hdf5:
+    hdf5_handle = None
+    if not args.use_video_files:
+        hdf5_handle = h5py.File(args.hdf5_path, "r", swmr=True)
+
+    try:
         for action_id, sample in tqdm(samples.items(), desc=f"  [{args.strategy}]"):
             action_key = f"action_{action_id}"
             action_hint = ACTION_CLASSES[sample["action"]]
@@ -193,14 +212,25 @@ def evaluate(args):
                 "cos_full_sev",
                 "description_first",
             }
-            fpv = extract_all_views(
-                hdf5,
-                action_key,
-                sample["clips"],
-                n_frames=args.frames_per_view,
-                weighted=weighted,
-                max_views=4,
-            )
+            if args.use_video_files:
+                fpv = extract_all_views_from_video(
+                    args.video_root,
+                    split,
+                    action_id,
+                    sample["clips"],
+                    n_frames=args.frames_per_view,
+                    weighted=weighted,
+                    max_views=4,
+                )
+            else:
+                fpv = extract_all_views(
+                    hdf5_handle,
+                    action_key,
+                    sample["clips"],
+                    n_frames=args.frames_per_view,
+                    weighted=weighted,
+                    max_views=4,
+                )
 
             if not fpv:
                 y_true_a.append(sample["action"])
@@ -426,6 +456,10 @@ def evaluate(args):
                 "raw_response": raw,
             }
 
+    finally:
+        if hdf5_handle is not None:
+            hdf5_handle.close()
+
     # ── Save results ──────────────────────────────────────────────────────────
     metrics = compute_metrics(y_true_a, y_pred_a, y_true_s, y_pred_s)
     metrics["strategy"] = args.strategy
@@ -482,6 +516,22 @@ def main():
 
     # Data paths
     parser.add_argument("--hdf5_path")
+    parser.add_argument(
+        "--use_video_files",
+        action="store_true",
+        help="Load frames from dataset folders instead of HDF5",
+    )
+    parser.add_argument(
+        "--video_root",
+        default=None,
+        help="Root folder of SoccerNet dataset (contains Train/Valid/Test)",
+    )
+    parser.add_argument(
+        "--split",
+        choices=["train", "valid", "test", "chall"],
+        default=None,
+        help="Split name for filesystem mode (auto-detected from annotations if omitted)",
+    )
     parser.add_argument("--annotations")
     parser.add_argument("--train_hdf5")
     parser.add_argument("--train_annotations")
@@ -526,8 +576,12 @@ def main():
         )
         return
 
-    if not args.hdf5_path or not args.annotations:
-        parser.error("Evaluation requires --hdf5_path and --annotations")
+    if args.use_video_files:
+        if not args.video_root or not args.annotations:
+            parser.error("Filesystem mode requires --video_root and --annotations")
+    else:
+        if not args.hdf5_path or not args.annotations:
+            parser.error("Evaluation requires --hdf5_path and --annotations")
 
     evaluate(args)
 

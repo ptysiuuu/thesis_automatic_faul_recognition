@@ -21,13 +21,17 @@ view is sent as a short video sequence (temporal embeddings).
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import List
 
 import h5py
 
+# Add rag_icl root to path so vlm_pipeline is importable
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from vlm_pipeline.utils.annotations import load_annotations
-from vlm_pipeline.utils.frames import extract_all_views
+from vlm_pipeline.utils.frames import extract_all_views, extract_all_views_from_video
 from vlm_pipeline.backends import get_backend
 from vlm_pipeline.utils.constants import ACTION_CLASSES, SEVERITY_CLASSES
 
@@ -89,6 +93,16 @@ def main():
     parser.add_argument("--hdf5_path", default=None)
     parser.add_argument("--annotations", default=None)
     parser.add_argument(
+        "--use_video_files",
+        action="store_true",
+        help="Load frames from dataset folders instead of HDF5",
+    )
+    parser.add_argument(
+        "--video_root",
+        default=None,
+        help="Root folder of SoccerNet dataset (contains Train/Valid/Test)",
+    )
+    parser.add_argument(
         "--split",
         choices=["train", "valid", "test"],
         default="valid",
@@ -101,16 +115,30 @@ def main():
     args = parser.parse_args()
     # Resolve paths based on split if explicit paths were not provided
     split = args.split
-    if args.annotations is None or args.hdf5_path is None:
-        hdf5_root = os.environ.get("HDF5_ROOT", "./")
+    if args.use_video_files:
         data_root = os.environ.get("DATA_ROOT", "./")
         split_cap = (
             "Train" if split == "train" else ("Valid" if split == "valid" else "Test")
         )
-        if args.hdf5_path is None:
-            args.hdf5_path = os.path.join(hdf5_root, f"{split_cap}.hdf5")
+        if args.video_root is None:
+            args.video_root = data_root
         if args.annotations is None:
             args.annotations = os.path.join(data_root, split_cap, "annotations.json")
+    else:
+        if args.annotations is None or args.hdf5_path is None:
+            hdf5_root = os.environ.get("HDF5_ROOT", "./")
+            data_root = os.environ.get("DATA_ROOT", "./")
+            split_cap = (
+                "Train"
+                if split == "train"
+                else ("Valid" if split == "valid" else "Test")
+            )
+            if args.hdf5_path is None:
+                args.hdf5_path = os.path.join(hdf5_root, f"{split_cap}.hdf5")
+            if args.annotations is None:
+                args.annotations = os.path.join(
+                    data_root, split_cap, "annotations.json"
+                )
 
     samples = load_annotations(args.annotations)
     if args.max_samples:
@@ -143,75 +171,95 @@ def main():
         except Exception:
             pass
 
-    with h5py.File(args.hdf5_path, "r", swmr=True) as hdf5, open(out_file, "a") as fout:
-        for action_id, sample in samples.items():
-            if str(action_id) in processed:
-                continue
-            action_key = f"action_{action_id}"
-            try:
-                fpv = extract_all_views(
-                    hdf5,
-                    action_key,
-                    sample["clips"],
-                    n_frames=args.frames_per_view,
-                    weighted=False,
-                    max_views=4,
-                )
-            except Exception as e:
-                print(f"Skipping {action_id}: could not load frames: {e}")
-                continue
+    hdf5_handle = None
+    if not args.use_video_files:
+        hdf5_handle = h5py.File(args.hdf5_path, "r", swmr=True)
 
-            if not fpv:
-                print(f"Skipping {action_id}: no frames")
-                continue
-            prompt = build_prompt(n_views=len(fpv))
+    try:
+        with open(out_file, "a") as fout:
+            for action_id, sample in samples.items():
+                if str(action_id) in processed:
+                    continue
+                action_key = f"action_{action_id}"
+                try:
+                    if args.use_video_files:
+                        fpv = extract_all_views_from_video(
+                            args.video_root,
+                            split,
+                            action_id,
+                            sample["clips"],
+                            n_frames=args.frames_per_view,
+                            weighted=False,
+                            max_views=4,
+                        )
+                    else:
+                        fpv = extract_all_views(
+                            hdf5_handle,
+                            action_key,
+                            sample["clips"],
+                            n_frames=args.frames_per_view,
+                            weighted=False,
+                            max_views=4,
+                        )
+                except Exception as e:
+                    print(f"Skipping {action_id}: could not load frames: {e}")
+                    continue
 
-            try:
-                raw = backend.classify(fpv, prompt)
-            except Exception as e:
-                print(f"Model error on {action_id}: {e}")
+                if not fpv:
+                    print(f"Skipping {action_id}: no frames")
+                    continue
+                prompt = build_prompt(n_views=len(fpv))
+
+                try:
+                    raw = backend.classify(fpv, prompt)
+                except Exception as e:
+                    print(f"Model error on {action_id}: {e}")
+                    record = {
+                        "action_id": action_id,
+                        "split": split,
+                        "vlm_model": args.model_name,
+                        "error": str(e),
+                        "true_action": sample.get("action"),
+                        "true_severity": sample.get("severity"),
+                    }
+                    fout.write(json.dumps(record) + "\n")
+                    continue
+
+                parsed = safe_parse_json(raw)
+                if parsed is None:
+                    # fallback: save raw text with low confidence
+                    record = {
+                        "action_id": action_id,
+                        "split": split,
+                        "vlm_model": args.model_name,
+                        "vlm_description": raw.strip()[:512],
+                        "extraction_confidence": "low",
+                        "true_action": sample.get("action"),
+                        "true_severity": sample.get("severity"),
+                    }
+                    fout.write(json.dumps(record) + "\n")
+                    print(f"Parse failed for {action_id}, saved raw.")
+                    continue
+                print(f"DEBUG {action_id}: {parsed}")
+
+                # Build final record merging gold labels
                 record = {
                     "action_id": action_id,
                     "split": split,
                     "vlm_model": args.model_name,
-                    "error": str(e),
                     "true_action": sample.get("action"),
                     "true_severity": sample.get("severity"),
+                    "vlm_description": (
+                        parsed.get("vlm_description", "") if parsed else raw.strip()
+                    ),
+                    "extraction_confidence": "high" if parsed else "low",
                 }
+
                 fout.write(json.dumps(record) + "\n")
-                continue
 
-            parsed = safe_parse_json(raw)
-            if parsed is None:
-                # fallback: save raw text with low confidence
-                record = {
-                    "action_id": action_id,
-                    "split": split,
-                    "vlm_model": args.model_name,
-                    "vlm_description": raw.strip()[:512],
-                    "extraction_confidence": "low",
-                    "true_action": sample.get("action"),
-                    "true_severity": sample.get("severity"),
-                }
-                fout.write(json.dumps(record) + "\n")
-                print(f"Parse failed for {action_id}, saved raw.")
-                continue
-            print(f"DEBUG {action_id}: {parsed}")
-
-            # Build final record merging gold labels
-            record = {
-                "action_id": action_id,
-                "split": split,
-                "vlm_model": args.model_name,
-                "true_action": sample.get("action"),
-                "true_severity": sample.get("severity"),
-                "vlm_description": (
-                    parsed.get("vlm_description", "") if parsed else raw.strip()
-                ),
-                "extraction_confidence": "high" if parsed else "low",
-            }
-
-            fout.write(json.dumps(record) + "\n")
+    finally:
+        if hdf5_handle is not None:
+            hdf5_handle.close()
 
     print(f"Wrote evidence file: {out_file}")
 
