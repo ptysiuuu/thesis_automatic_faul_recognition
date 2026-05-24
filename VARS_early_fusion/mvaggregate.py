@@ -132,9 +132,9 @@ class WeightedAggregate(nn.Module):
         final_attention_weights = final_attention_weights.T.reshape(B, V, V).sum(1)
 
         output = torch.sum(
-            torch.mul(aux.squeeze(), final_attention_weights.unsqueeze(-1)), 1
-        )
-        return output.squeeze(), final_attention_weights
+            torch.mul(aux, final_attention_weights.unsqueeze(-1)), dim=1
+        )  # [B, feat_dim]
+        return output, final_attention_weights
 
 
 class TransformerAggregate(nn.Module):
