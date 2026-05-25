@@ -29,13 +29,13 @@ class VJEPA21Backbone(nn.Module):
             sys.path.insert(0, VJEPA2_REPO)
 
         print(f"[VJEPA21] Loading ViT-B/16 from {checkpoint_path}...")
-        self.encoder = torch.hub.load(
+        result = torch.hub.load(
             VJEPA2_REPO,
             "vjepa2_1_vit_base_384",
             source="local",
             trust_repo=True,
-            weights=checkpoint_path,
         )
+        self.encoder = result[0] if isinstance(result, (tuple, list)) else result
         self.feat_dim = 768
         self.num_frames = num_frames
         self.tubelet_size = 2
