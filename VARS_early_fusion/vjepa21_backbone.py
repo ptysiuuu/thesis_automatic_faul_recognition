@@ -37,30 +37,20 @@ class VJEPA21Backbone(nn.Module):
         )
         self.encoder = result[0] if isinstance(result, (tuple, list)) else result
 
-        # Explicitly load checkpoint to guarantee pretrained weights
+        # Explicitly load checkpoint — use ema_encoder (EMA weights = better quality)
         print(f"[VJEPA21] Loading weights from {checkpoint_path}...")
-        ckpt = torch.load(checkpoint_path, map_location="cpu")
+        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
-        # V-JEPA 2.1 checkpoint structure — try common keys
-        if isinstance(ckpt, dict):
-            state_dict = (
-                ckpt.get("ema_encoder")
-                or ckpt.get("encoder")
-                or ckpt.get("model")
-                or ckpt  # raw state dict
-            )
-        else:
-            state_dict = ckpt
+        # ema_encoder preferred over encoder (EMA = smoother, better for inference)
+        state_dict = ckpt.get("ema_encoder") or ckpt.get("encoder")
 
-        # Strip DDP prefix if present
-        state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+        # Strip 'module.backbone.' prefix (DDP + backbone wrapper)
+        state_dict = {
+            k.replace("module.backbone.", ""): v for k, v in state_dict.items()
+        }
 
-        msg = self.encoder.load_state_dict(state_dict, strict=False)
-        print(
-            f"[VJEPA21] Weights loaded. Missing: {len(msg.missing_keys)}, Unexpected: {len(msg.unexpected_keys)}"
-        )
-        if msg.missing_keys:
-            print(f"  Missing (first 5): {msg.missing_keys[:5]}")
+        msg = self.encoder.load_state_dict(state_dict, strict=True)
+        print(f"[VJEPA21] Weights loaded cleanly (strict=True).")
 
         self.feat_dim = 768
         self.num_frames = num_frames
