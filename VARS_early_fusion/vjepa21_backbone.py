@@ -49,7 +49,19 @@ class VJEPA21Backbone(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, T, H, W = x.shape
 
-        # Resize spatial dims to 384 if needed
+        if T != 16:
+            x = F.interpolate(
+                x,
+                size=(
+                    16,
+                    self.img_size if H != self.img_size else H,
+                    self.img_size if W != self.img_size else W,
+                ),
+                mode="trilinear",
+                align_corners=False,
+            )
+            T = 16
+
         if H != self.img_size or W != self.img_size:
             x = F.interpolate(
                 x,
@@ -58,22 +70,10 @@ class VJEPA21Backbone(nn.Module):
                 align_corners=False,
             )
 
-        # VJEPA takes [B, C, T, H, W] directly
-        result = self.encoder(x)
-        tokens = (
-            result[0] if isinstance(result, (tuple, list)) else result
-        )  # [B, N, 768]
+        tokens = self.encoder(x)  # [B, 4608, 768]
 
-        # Reshape: N = T' * H' * W' → mean-pool spatial → [B, T', 768]
-        T_prime = T // self.tubelet_size
-        H_prime = self.img_size // self.patch_size
-        N_expected = T_prime * H_prime * H_prime
-
-        if tokens.shape[1] != N_expected:
-            # Fallback: mean-pool all tokens and expand to T'
-            tokens = tokens.mean(dim=1, keepdim=True).expand(-1, T_prime, -1)
-        else:
-            tokens = tokens.view(B, T_prime, H_prime * H_prime, 768)
-            tokens = tokens.mean(dim=2)  # [B, T', 768]
-
+        T_prime = 16 // self.tubelet_size  # always 8
+        H_prime = self.img_size // self.patch_size  # always 24
+        tokens = tokens.view(B, T_prime, H_prime * H_prime, self.feat_dim)
+        tokens = tokens.mean(dim=2)  # [B, 8, 768]
         return tokens
