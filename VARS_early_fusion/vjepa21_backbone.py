@@ -81,3 +81,9 @@ class VJEPA21Backbone(nn.Module):
         tokens = tokens.view(B, 8, 576, self.feat_dim)
         tokens = tokens.mean(dim=2)  # [B, 8, 768]
         return tokens
+
+    def train(self, mode=True):
+        """Keep encoder in eval mode — disables dropout inside VJEPA."""
+        super().train(mode)
+        self.encoder.eval()
+        return self
