@@ -251,6 +251,12 @@ class MVNetwork(torch.nn.Module):
             )
             self.feat_dim = 768
 
+        elif net_name == "vjepa21_vitb":
+            from vjepa21_backbone import VJEPA21Backbone
+
+            network = VJEPA21Backbone(num_frames=16)
+            self.feat_dim = 768
+
         else:
             print(
                 f"Warning: unknown backbone '{net_name}', falling back to r2plus1d_18"

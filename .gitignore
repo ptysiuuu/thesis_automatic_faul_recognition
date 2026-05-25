@@ -38,3 +38,5 @@ VARS_early_fusion/tests/mamba_aggregate_smoke.py
 .vscode/settings.json
 ablation_results_v2/output/summary.json
 ablation_results_v2/output/results.json
+CLAUDE.md
+graphify-out
