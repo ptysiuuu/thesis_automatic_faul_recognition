@@ -669,7 +669,9 @@ def main(args):
         if combined_sev_dist is not None
         else dataset_Train.getDistribution()[0]
     )
-    ordinal_pos_weight = _build_ordinal_pos_weight(severity_dist)
+    ordinal_pos_weight = (
+        None if args.no_pos_weight else _build_ordinal_pos_weight(severity_dist)
+    )
     if ordinal_pos_weight is not None:
         ordinal_pos_weight = ordinal_pos_weight.cuda()
 
@@ -859,6 +861,12 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Train on Train+Valid combined, evaluate on Test only",
+    )
+    parser.add_argument(
+        "--no_pos_weight",
+        action="store_true",
+        default=False,
+        help="Disable ordinal pos_weight on severity loss",
     )
 
     args = parser.parse_args()
