@@ -28,7 +28,7 @@ class VJEPA21Backbone(nn.Module):
         if VJEPA2_REPO not in sys.path:
             sys.path.insert(0, VJEPA2_REPO)
 
-        print(f"[VJEPA21] Loading ViT-B/16 from {checkpoint_path}...")
+        print(f"[VJEPA21] Loading ViT-B/16 architecture...")
         result = torch.hub.load(
             VJEPA2_REPO,
             "vjepa2_1_vit_base_384",
@@ -36,12 +36,38 @@ class VJEPA21Backbone(nn.Module):
             trust_repo=True,
         )
         self.encoder = result[0] if isinstance(result, (tuple, list)) else result
+
+        # Explicitly load checkpoint to guarantee pretrained weights
+        print(f"[VJEPA21] Loading weights from {checkpoint_path}...")
+        ckpt = torch.load(checkpoint_path, map_location="cpu")
+
+        # V-JEPA 2.1 checkpoint structure — try common keys
+        if isinstance(ckpt, dict):
+            state_dict = (
+                ckpt.get("ema_encoder")
+                or ckpt.get("encoder")
+                or ckpt.get("model")
+                or ckpt  # raw state dict
+            )
+        else:
+            state_dict = ckpt
+
+        # Strip DDP prefix if present
+        state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+
+        msg = self.encoder.load_state_dict(state_dict, strict=False)
+        print(
+            f"[VJEPA21] Weights loaded. Missing: {len(msg.missing_keys)}, Unexpected: {len(msg.unexpected_keys)}"
+        )
+        if msg.missing_keys:
+            print(f"  Missing (first 5): {msg.missing_keys[:5]}")
+
         self.feat_dim = 768
         self.num_frames = num_frames
         self.tubelet_size = 2
         self.patch_size = 16
         self.img_size = 384
-        self.fc = nn.Sequential()  # dummy — MVNetwork interface
+        self.fc = nn.Sequential()
 
         n_params = sum(p.numel() for p in self.encoder.parameters()) / 1e6
         print(f"[VJEPA21] Ready. {n_params:.0f}M params.")
