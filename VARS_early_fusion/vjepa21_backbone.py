@@ -49,31 +49,19 @@ class VJEPA21Backbone(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, T, H, W = x.shape
 
-        if T != 16:
+        # Always use 16 frames and 384px — VJEPA pretrained config
+        target_T = 16
+        if T != target_T or H != self.img_size or W != self.img_size:
             x = F.interpolate(
                 x,
-                size=(
-                    16,
-                    self.img_size if H != self.img_size else H,
-                    self.img_size if W != self.img_size else W,
-                ),
-                mode="trilinear",
-                align_corners=False,
-            )
-            T = 16
-
-        if H != self.img_size or W != self.img_size:
-            x = F.interpolate(
-                x,
-                size=(T, self.img_size, self.img_size),
+                size=(target_T, self.img_size, self.img_size),
                 mode="trilinear",
                 align_corners=False,
             )
 
-        tokens = self.encoder(x)  # [B, 4608, 768]
+        tokens = self.encoder(x)  # [B, 4608, 768] — confirmed by probe
 
-        T_prime = 16 // self.tubelet_size  # always 8
-        H_prime = self.img_size // self.patch_size  # always 24
-        tokens = tokens.view(B, T_prime, H_prime * H_prime, self.feat_dim)
+        # T'=8, H'=W'=24 always (tubelet=2, patch=16, img=384)
+        tokens = tokens.view(B, 8, 576, self.feat_dim)
         tokens = tokens.mean(dim=2)  # [B, 8, 768]
         return tokens
