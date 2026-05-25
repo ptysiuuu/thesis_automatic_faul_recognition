@@ -60,6 +60,9 @@ class VJEPA21Backbone(nn.Module):
         self.fc = nn.Sequential()
 
         n_params = sum(p.numel() for p in self.encoder.parameters()) / 1e6
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+        print("[VJEPA21] Encoder frozen by default.")
         print(f"[VJEPA21] Ready. {n_params:.0f}M params.")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
