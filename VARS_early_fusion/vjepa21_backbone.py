@@ -14,16 +14,21 @@ class VJEPA21Backbone(nn.Module):
 
     Pretraining: JEPA objective on 1M hours internet video
     Input : [B, C, T, H, W]  — MVNetwork format (C-first)
-    Output: [B, T', 768]     — temporal tokens for TransformerAggregate
+    Output: [B, T', 768]     — spatiotemporal tokens for TransformerAggregate
 
     Token structure (16f, 384px, patch=16, tubelet=2):
       T' = 16 / 2 = 8  temporal positions
       H' = W' = 384 / 16 = 24  spatial positions
       N  = 8 * 24 * 24 = 4608 tokens total
-    Spatial mean-pool → [B, 8, 768]
+    Spatial pool to 3x3 grid → 8 * 9 = 72 tokens per view
     """
 
-    def __init__(self, num_frames: int = 16, checkpoint_path: str = VJEPA21_CKPT):
+    def __init__(
+        self,
+        num_frames: int = 16,
+        checkpoint_path: str = VJEPA21_CKPT,
+        use_adapter: bool = True,
+    ):
         super().__init__()
         if VJEPA2_REPO not in sys.path:
             sys.path.insert(0, VJEPA2_REPO)
@@ -57,7 +62,18 @@ class VJEPA21Backbone(nn.Module):
         self.tubelet_size = 2
         self.patch_size = 16
         self.img_size = 384
+        self.spatial_pool = (3, 3)
+        self.tokens_per_view = 8 * self.spatial_pool[0] * self.spatial_pool[1]
         self.fc = nn.Sequential()
+
+        self.jepa_adapter = None
+        if use_adapter:
+            self.jepa_adapter = nn.Sequential(
+                nn.LayerNorm(self.feat_dim),
+                nn.Linear(self.feat_dim, self.feat_dim),
+                nn.GELU(),
+                nn.Linear(self.feat_dim, self.feat_dim),
+            )
 
         n_params = sum(p.numel() for p in self.encoder.parameters()) / 1e6
         for param in self.encoder.parameters():
@@ -81,9 +97,54 @@ class VJEPA21Backbone(nn.Module):
         tokens = self.encoder(x)  # [B, 4608, 768] — confirmed by probe
 
         # T'=8, H'=W'=24 always (tubelet=2, patch=16, img=384)
-        tokens = tokens.view(B, 8, 576, self.feat_dim)
-        tokens = tokens.mean(dim=2)  # [B, 8, 768]
+        tokens = tokens.view(B, 8, 24, 24, self.feat_dim)
+        tokens = tokens.permute(0, 1, 4, 2, 3).reshape(B * 8, self.feat_dim, 24, 24)
+        tokens = F.adaptive_max_pool2d(tokens, output_size=self.spatial_pool)
+        tokens = tokens.view(
+            B, 8, self.feat_dim, self.spatial_pool[0], self.spatial_pool[1]
+        ).permute(0, 1, 3, 4, 2)
+        tokens = tokens.reshape(
+            B, 8 * self.spatial_pool[0] * self.spatial_pool[1], self.feat_dim
+        )
+        if self.jepa_adapter is not None:
+            tokens = self.jepa_adapter(tokens)
         return tokens
+
+    def get_layerwise_lr_groups(
+        self, base_lr: float = 1e-5, decay: float = 0.65
+    ) -> list:
+        if not hasattr(self.encoder, "blocks"):
+            return [{"params": self.encoder.parameters(), "lr": base_lr}]
+
+        num_blocks = len(self.encoder.blocks)
+        param_groups = []
+
+        def _add_group(params, lr):
+            params = [p for p in params if p.requires_grad]
+            if params:
+                param_groups.append({"params": params, "lr": lr})
+
+        early_params = []
+        for name in ("patch_embed", "pos_embed", "cls_token"):
+            if not hasattr(self.encoder, name):
+                continue
+            obj = getattr(self.encoder, name)
+            if isinstance(obj, nn.Parameter):
+                early_params.append(obj)
+            elif isinstance(obj, nn.Module):
+                early_params.extend(list(obj.parameters()))
+
+        early_lr = base_lr * (decay**num_blocks)
+        _add_group(early_params, early_lr)
+
+        for i, block in enumerate(self.encoder.blocks):
+            lr = base_lr * (decay ** (num_blocks - 1 - i))
+            _add_group(block.parameters(), lr)
+
+        if hasattr(self.encoder, "norm"):
+            _add_group(self.encoder.norm.parameters(), base_lr)
+
+        return param_groups
 
     def train(self, mode=True):
         """Keep encoder in eval mode — disables dropout inside VJEPA."""

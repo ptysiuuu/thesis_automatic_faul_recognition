@@ -31,13 +31,14 @@ class SetNorm(nn.Module):
 
 class TemporalLocalizer(nn.Module):
     """
-    Replaces mean pooling over the time dimension with learned attention pooling.
+    Replaces mean pooling over the token dimension with learned attention pooling.
 
-    Given per-view temporal features [B, V, T', D], computes a scalar importance
-    score per (view, timestep) pair and returns a weighted sum over T'.
+    Given per-view features [B, V, T', D], computes a scalar importance score per
+    token and returns a weighted sum over T'. T' can represent purely temporal
+    tokens or spatiotemporal tokens (e.g., time x pooled spatial grid).
 
-    This lets the model focus on the contact moment rather than averaging
-    approach, contact, and aftermath frames equally.
+    This lets the model focus on the most informative moment or patch rather than
+    averaging all tokens equally.
 
     Parameters
     ----------
@@ -46,7 +47,7 @@ class TemporalLocalizer(nn.Module):
 
     Returns
     -------
-    weighted : [B, V, D]   — temporally-pooled per-view features
+    weighted : [B, V, D]   — token-pooled per-view features
     weights  : [B, V, T']  — attention weights (sum to 1 over T' per view)
     """
 
@@ -657,6 +658,7 @@ class MVAggregate(nn.Module):
         cascade_severity=False,
         use_text_bridge=False,
         clip_embeddings_path: str = "",
+        T_max: int = None,
     ):
         super().__init__()
         self.agr_type = agr_type
@@ -710,12 +712,18 @@ class MVAggregate(nn.Module):
                 model=model, lifting_net=lifting_net
             )
         elif agr_type == "transformer":
-            self.aggregation_model = TransformerAggregate(
+            agg_kwargs = dict(
                 model=model,
                 feat_dim=feat_dim,
                 lifting_net=lifting_net,
                 use_text_bridge=use_text_bridge,
             )
+            if T_max is not None:
+                agg_kwargs["T_max"] = T_max
+                if T_max >= 72:
+                    agg_kwargs["num_heads"] = 8
+                    agg_kwargs["num_layers"] = 2
+            self.aggregation_model = TransformerAggregate(**agg_kwargs)
         elif agr_type == "crossattn":
             self.aggregation_model = CrossAttentionAggregate(
                 model=model, feat_dim=feat_dim, lifting_net=lifting_net
@@ -740,7 +748,7 @@ class MVAggregate(nn.Module):
                 num_heads=4,
                 knn_k=3,
                 topology="structured",
-                T_max=8,
+                T_max=T_max if T_max is not None else 8,
             )
         elif agr_type == "dynagat":
             self.aggregation_model = DynamicGATAggregate(

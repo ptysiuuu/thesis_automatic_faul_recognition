@@ -27,6 +27,7 @@ class MultiViewDataset(Dataset):
         transform_model=None,
         fusion_mode=False,
         center_weighted=False,
+        backbone_type=None,
     ):
         self.split = split
         self.start = start
@@ -37,6 +38,8 @@ class MultiViewDataset(Dataset):
         self.fusion_mode = fusion_mode
         self.factor = (end - start) / (((end - start) / 25) * fps)
         self.center_weighted = center_weighted
+        self.backbone_type = backbone_type
+        self.vjepa_num_frames = 16
 
         if split != "Chall":
             (
@@ -117,6 +120,16 @@ class MultiViewDataset(Dataset):
         # Center the window if we have more than needed
         return indices
 
+    def _sample_vjepa_frames(self, frames: torch.Tensor) -> torch.Tensor:
+        total = frames.shape[0]
+        if total <= 0:
+            return None
+        if total == self.vjepa_num_frames:
+            return frames
+        idx = torch.linspace(0, total - 1, steps=self.vjepa_num_frames)
+        idx = idx.round().long().clamp(0, total - 1)
+        return frames[idx]
+
     def getDistribution(self):
         return self.distribution_offence_severity, self.distribution_action
 
@@ -162,8 +175,10 @@ class MultiViewDataset(Dataset):
 
         total = frames.shape[0]
 
+        if self.backbone_type == "vjepa21_vitb":
+            final_frames = self._sample_vjepa_frames(frames)
         # Center-weighted sampling — focuses on contact moment
-        if self.center_weighted and total >= 8:
+        elif self.center_weighted and total >= 8:
             import numpy as np
 
             center = total / 2.0
@@ -183,7 +198,7 @@ class MultiViewDataset(Dataset):
                 return None
             final_frames = frames[chosen]
 
-        if final_frames.shape[0] == 0:
+        if final_frames is None or final_frames.shape[0] == 0:
             return None
 
         final_frames = final_frames.permute(0, 3, 1, 2).float() / 255.0
@@ -207,14 +222,17 @@ class MultiViewDataset(Dataset):
         frames = video[self.start : self.end]
         final_frames = None
 
-        for j in range(len(frames)):
-            if j % self.factor < 1:
-                f = frames[j].unsqueeze(0)
-                final_frames = (
-                    f if final_frames is None else torch.cat((final_frames, f), 0)
-                )
+        if self.backbone_type == "vjepa21_vitb":
+            final_frames = self._sample_vjepa_frames(frames)
+        else:
+            for j in range(len(frames)):
+                if j % self.factor < 1:
+                    f = frames[j].unsqueeze(0)
+                    final_frames = (
+                        f if final_frames is None else torch.cat((final_frames, f), 0)
+                    )
 
-        if final_frames is None:
+        if final_frames is None or final_frames.shape[0] == 0:
             return None
 
         final_frames = final_frames.permute(0, 3, 1, 2)

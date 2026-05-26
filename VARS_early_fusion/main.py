@@ -300,7 +300,7 @@ def main(args):
         fps=fps,
         transform_model=transforms_model,
         fusion_mode=fusion_mode,
-        center_weighted=(pre_model == "vjepa21_vitb"),
+        backbone_type=pre_model,
     )
 
     if only_evaluation == 0:
@@ -520,13 +520,35 @@ def main(args):
         return 0
 
     # --- training setup ---
-    # Freeze backbone params initially; heads and (for MVNetwork) aggregator train at full LR.
+    # Freeze backbone params initially; keep VJEPA adapter trainable.
+    is_vjepa = (not fusion_mode) and pre_model == "vjepa21_vitb"
+    vjepa_backbone = None
+    if is_vjepa:
+        for module in model.modules():
+            if hasattr(module, "get_layerwise_lr_groups"):
+                vjepa_backbone = module
+                break
+
     for name, param in model.named_parameters():
-        if backbone_prefix in name:
+        if backbone_prefix in name and "jepa_adapter" not in name:
             param.requires_grad = False
 
-    head_params = [p for n, p in model.named_parameters() if p.requires_grad]
-    backbone_params = [p for n, p in model.named_parameters() if backbone_prefix in n]
+    adapter_params = [
+        p
+        for n, p in model.named_parameters()
+        if "jepa_adapter" in n and p.requires_grad
+    ]
+    head_params = [
+        p
+        for n, p in model.named_parameters()
+        if p.requires_grad and "jepa_adapter" not in n
+    ]
+    backbone_params = [
+        p
+        for n, p in model.named_parameters()
+        if backbone_prefix in n and "jepa_adapter" not in n
+    ]
+    adapter_lr = 1e-3 if adapter_params else None
 
     # Uncertainty weighter — 2 learnable scalars (log-variances) trained at head LR.
     uncertainty_weighter = None
@@ -550,11 +572,17 @@ def main(args):
         if epoch_start > freeze_epoch:
             for p in backbone_params:
                 p.requires_grad = True
+            optimizer_groups = [{"params": head_params, "lr": LR}]
+            if adapter_params:
+                optimizer_groups.append({"params": adapter_params, "lr": adapter_lr})
+            if is_vjepa and vjepa_backbone is not None:
+                optimizer_groups.extend(
+                    vjepa_backbone.get_layerwise_lr_groups(base_lr=1e-5, decay=0.65)
+                )
+            else:
+                optimizer_groups.append({"params": backbone_params, "lr": 1e-5})
             optimizer = torch.optim.AdamW(
-                [
-                    {"params": head_params, "lr": LR},
-                    {"params": backbone_params, "lr": 1e-5},
-                ],
+                optimizer_groups,
                 betas=(0.9, 0.999),
                 eps=1e-7,
                 weight_decay=weight_decay,
@@ -563,8 +591,11 @@ def main(args):
                 f"Resuming from epoch {epoch_start} — backbone already unfrozen"
             )
         else:
+            optimizer_groups = [{"params": head_params, "lr": LR}]
+            if adapter_params:
+                optimizer_groups.append({"params": adapter_params, "lr": adapter_lr})
             optimizer = torch.optim.AdamW(
-                [{"params": head_params, "lr": LR}],
+                optimizer_groups,
                 betas=(0.9, 0.999),
                 eps=1e-7,
                 weight_decay=weight_decay,
@@ -603,8 +634,11 @@ def main(args):
                 scheduler.step()
 
     else:
+        optimizer_groups = [{"params": head_params, "lr": LR}]
+        if adapter_params:
+            optimizer_groups.append({"params": adapter_params, "lr": adapter_lr})
         optimizer = torch.optim.AdamW(
-            [{"params": head_params, "lr": LR}],
+            optimizer_groups,
             betas=(0.9, 0.999),
             eps=1e-7,
             weight_decay=weight_decay,

@@ -204,6 +204,7 @@ class MVNetwork(torch.nn.Module):
         self.graph_topology = graph_topology
         self.cascade_severity = cascade_severity
         self.feat_dim = 512
+        self._tokens_per_view = None
 
         if net_name in _VIDEOMAE_V2_KEYS:
             hf_id, hidden_size = HF_VIDEOMAE_REGISTRY[net_name]
@@ -256,6 +257,7 @@ class MVNetwork(torch.nn.Module):
 
             network = VJEPA21Backbone(num_frames=16)
             self.feat_dim = 768
+            self._tokens_per_view = getattr(network, "tokens_per_view", None)
 
         else:
             print(
@@ -274,6 +276,7 @@ class MVNetwork(torch.nn.Module):
             cascade_severity=self.cascade_severity,
             use_text_bridge=use_text_bridge,
             clip_embeddings_path=clip_embeddings_path,
+            T_max=self._tokens_per_view,
         )
 
     def forward(self, mvimages: torch.Tensor):

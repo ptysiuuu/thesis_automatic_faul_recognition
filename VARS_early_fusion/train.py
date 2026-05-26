@@ -232,6 +232,13 @@ def _run_with_tta(model, mvclips):
 # ---------------------------------------------------------------------------
 
 
+def _find_vjepa_backbone(model):
+    for module in model.modules():
+        if hasattr(module, "get_layerwise_lr_groups"):
+            return module
+    return None
+
+
 def trainer(
     train_loader,
     val_loader,
@@ -283,22 +290,35 @@ def trainer(
 
     for epoch in range(epoch_start, max_epochs):
 
-        # Unfreeze backbone at freeze_epoch with 10× smaller LR (discriminative fine-tuning)
+        # Unfreeze backbone at freeze_epoch with discriminative fine-tuning
         if epoch == freeze_epoch:
-            backbone_params = [
-                p
-                for n, p in model.named_parameters()
-                if backbone_prefix in n and not p.requires_grad
-            ]
-            for p in backbone_params:
-                p.requires_grad = True
-            if backbone_params:
-                optimizer.add_param_group({"params": backbone_params, "lr": 1e-5})
-            ema.register_new()
-            logging.info(
-                f"Backbone unfrozen at epoch {freeze_epoch} (prefix='{backbone_prefix}') — "
-                f"{len(backbone_params)} param groups added at LR=1e-5"
-            )
+            vjepa_backbone = _find_vjepa_backbone(model)
+            if vjepa_backbone is not None and hasattr(vjepa_backbone, "encoder"):
+                for p in vjepa_backbone.encoder.parameters():
+                    p.requires_grad = True
+                for group in vjepa_backbone.get_layerwise_lr_groups(
+                    base_lr=1e-5, decay=0.65
+                ):
+                    optimizer.add_param_group(group)
+                ema.register_new()
+                logging.info(
+                    "Backbone unfrozen with layer-wise LR decay (base_lr=1e-5, decay=0.65)"
+                )
+            else:
+                backbone_params = [
+                    p
+                    for n, p in model.named_parameters()
+                    if backbone_prefix in n and not p.requires_grad
+                ]
+                for p in backbone_params:
+                    p.requires_grad = True
+                if backbone_params:
+                    optimizer.add_param_group({"params": backbone_params, "lr": 1e-5})
+                ema.register_new()
+                logging.info(
+                    f"Backbone unfrozen at epoch {freeze_epoch} (prefix='{backbone_prefix}') — "
+                    f"{len(backbone_params)} param groups added at LR=1e-5"
+                )
 
         print(f"\nEpoch {epoch + 1}/{max_epochs}")
         pbar = tqdm(total=len(train_loader), desc="Training", leave=True)
@@ -553,7 +573,10 @@ def _train_epoch(
 
             # --- losses ---
             labels_int = targets_sev.argmax(dim=1)
-            loss_sev = ordinal_loss(out_sev, labels_int)
+            pos_weight = None
+            if isinstance(criterion, dict):
+                pos_weight = criterion.get("ordinal_pos_weight")
+            loss_sev = ordinal_loss(out_sev, labels_int, pos_weight=pos_weight)
             loss_act = criterion_action(out_act, targets_act)
 
             loss_aux = (
