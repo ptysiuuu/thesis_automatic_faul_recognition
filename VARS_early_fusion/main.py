@@ -300,6 +300,7 @@ def main(args):
         fps=fps,
         transform_model=transforms_model,
         fusion_mode=fusion_mode,
+        center_weighted=(pre_model == "vjepa21_vitb"),
     )
 
     if only_evaluation == 0:

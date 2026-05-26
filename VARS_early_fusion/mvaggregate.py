@@ -171,6 +171,7 @@ class TransformerAggregate(nn.Module):
 
         # Positional embeddings: one per view (max 5) and one per time-step
         self.view_embeds = nn.Parameter(torch.zeros(1, 5, feat_dim))
+        self.T_max = T_max
         self.temporal_embeds = nn.Parameter(torch.zeros(1, T_max, feat_dim))
         self.live_replay_embed = nn.Embedding(2, feat_dim)
         nn.init.zeros_(self.live_replay_embed.weight)
@@ -259,7 +260,10 @@ class TransformerAggregate(nn.Module):
 
         # positional embeddings (added after normalization, not washed out)
         raw = raw + self.view_embeds[:, :V, :].unsqueeze(2)
-        raw = raw + self.temporal_embeds[:, :T, :].unsqueeze(1)
+        T_eff = min(T, self.T_max)
+        raw[:, :, :T_eff, :] = raw[:, :, :T_eff, :] + self.temporal_embeds[
+            :, :T_eff, :
+        ].unsqueeze(0)
 
         tokens = raw.flatten(1, 2)  # [B, V*T', D]
 

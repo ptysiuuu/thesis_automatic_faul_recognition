@@ -26,6 +26,7 @@ class MultiViewDataset(Dataset):
         transform=None,
         transform_model=None,
         fusion_mode=False,
+        center_weighted=False,
     ):
         self.split = split
         self.start = start
@@ -35,6 +36,7 @@ class MultiViewDataset(Dataset):
         self.num_views = num_views
         self.fusion_mode = fusion_mode
         self.factor = (end - start) / (((end - start) / 25) * fps)
+        self.center_weighted = center_weighted
 
         if split != "Chall":
             (
@@ -89,6 +91,32 @@ class MultiViewDataset(Dataset):
             self._hdf5 = h5py.File(self._hdf5_path, "r", swmr=True)
         return self._hdf5
 
+    def _sample_indices_center_weighted(self, total_frames: int, n_frames: int) -> list:
+        """
+        Sample n_frames indices with gaussian weight around center.
+        Contact moment is typically in the middle of SoccerNet clips.
+        """
+        import numpy as np
+
+        center = total_frames / 2.0
+        sigma = total_frames / 4.0
+        positions = np.arange(total_frames, dtype=float)
+        weights = np.exp(-0.5 * ((positions - center) / sigma) ** 2)
+        weights /= weights.sum()
+        indices = np.random.choice(
+            total_frames, size=n_frames, replace=False, p=weights
+        )
+        return sorted(indices.tolist())
+
+    def _sample_indices_stride(self, total_frames: int, stride: int = 2) -> list:
+        """
+        Stride-2 sampling — matches VJEPA pretraining distribution.
+        Takes every stride-th frame, centered on clip.
+        """
+        indices = list(range(0, total_frames, stride))
+        # Center the window if we have more than needed
+        return indices
+
     def getDistribution(self):
         return self.distribution_offence_severity, self.distribution_action
 
@@ -118,6 +146,7 @@ class MultiViewDataset(Dataset):
         return self._process_clip_video(clip_path)
 
     def _process_clip_hdf5(self, clip_path, hdf5):
+
         parts = clip_path.split(os.sep)
         action = parts[-2]
         clip_key = parts[-1].replace(".mp4", "")
@@ -131,15 +160,30 @@ class MultiViewDataset(Dataset):
         if frames.shape[0] < 2:
             return None
 
-        final_frames = None
-        for j in range(len(frames)):
-            if j % self.factor < 1:
-                f = frames[j].unsqueeze(0)
-                final_frames = (
-                    f if final_frames is None else torch.cat((final_frames, f), 0)
-                )
+        total = frames.shape[0]
 
-        if final_frames is None:
+        # Center-weighted sampling — focuses on contact moment
+        if self.center_weighted and total >= 8:
+            import numpy as np
+
+            center = total / 2.0
+            sigma = total / 4.0
+            positions = np.arange(total, dtype=float)
+            weights = np.exp(-0.5 * ((positions - center) / sigma) ** 2)
+            weights /= weights.sum()
+            n_frames = max(1, int(total / self.factor))
+            n_frames = min(n_frames, total)
+            chosen = np.random.choice(total, size=n_frames, replace=False, p=weights)
+            chosen = sorted(chosen.tolist())
+            final_frames = frames[chosen]
+        else:
+            # Original uniform stride sampling
+            chosen = [j for j in range(total) if j % self.factor < 1]
+            if not chosen:
+                return None
+            final_frames = frames[chosen]
+
+        if final_frames.shape[0] == 0:
             return None
 
         final_frames = final_frames.permute(0, 3, 1, 2).float() / 255.0
