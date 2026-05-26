@@ -553,9 +553,7 @@ def _train_epoch(
 
             # --- losses ---
             labels_int = targets_sev.argmax(dim=1)
-            loss_sev = ordinal_loss(
-                out_sev, labels_int, pos_weight=criterion.get("ordinal_pos_weight")
-            )
+            loss_sev = ordinal_loss(out_sev, labels_int)
             loss_act = criterion_action(out_act, targets_act)
 
             loss_aux = (
