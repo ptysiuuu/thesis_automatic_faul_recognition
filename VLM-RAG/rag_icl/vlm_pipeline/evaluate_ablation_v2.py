@@ -106,6 +106,7 @@ from vlm_pipeline.strategies.severity_focused import (
     run_contrastive_severity,
     run_physics_severity,
 )
+from vlm_pipeline.strategies.multi_turn_var import run_multi_turn_var
 from vlm_pipeline.strategies.description_first import DescriptionFirstStrategy
 from vlm_pipeline.backends import get_backend
 
@@ -130,6 +131,7 @@ def _infer_split(annotations_path: str, default: str = "valid") -> str:
 def evaluate(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    is_nvidia = "nvidia" in args.model_name.lower()
 
     print(f"\n{'='*60}")
     print(f"Strategy: {args.strategy}")
@@ -211,6 +213,7 @@ def evaluate(args):
                 "full_sev_two_stage",
                 "cos_full_sev",
                 "description_first",
+                "multi_turn_var",
             }
             if args.use_video_files:
                 fpv = extract_all_views_from_video(
@@ -305,7 +308,9 @@ def evaluate(args):
                         len(fpv), law12_ctx, mined_text, sel_info
                     )
                     raw1 = backend.classify(
-                        key_fpv, act_prompt, extra_images=mined_imgs
+                        key_fpv,
+                        act_prompt,
+                        extra_images=None if is_nvidia else mined_imgs,
                     )
                     act_idx = parse_action_only(raw1)
                     act_str = ACTION_CLASSES[act_idx] if act_idx != -1 else "Dont know"
@@ -414,6 +419,16 @@ def evaluate(args):
                         rag=rag,
                     )
 
+                # ── Multi-Turn VAR ────────────────────────────────────────
+                elif args.strategy == "multi_turn_var":
+                    act_idx, sev_idx, raw = run_multi_turn_var(
+                        backend=backend,
+                        frames_per_view=fpv,
+                        law12_ctx=law12_ctx,
+                        per_action_priors=per_action_priors,
+                        rag=rag,
+                    )
+
                 # ── Row X: cos_static_sev (NEW) ──────────────────────────
                 elif args.strategy == "cos_static_sev":
                     act_idx, sev_idx, raw = run_cos_static_sev(
@@ -443,6 +458,19 @@ def evaluate(args):
             except Exception as e:
                 print(f"  Error on {action_id}: {e}")
                 act_idx, sev_idx, raw = -1, -1, str(e)
+
+            # Debug printing to indicate parsing success
+            if act_idx != -1 and sev_idx != -1:
+                tqdm.write(
+                    f"OK Parsed {action_id}: A={ACTION_CLASSES[act_idx]} S={SEVERITY_CLASSES[sev_idx]}"
+                )
+            else:
+                msg = []
+                if act_idx == -1:
+                    msg.append("Action failed")
+                if sev_idx == -1:
+                    msg.append("Severity failed")
+                tqdm.write(f"FAIL Parse error {action_id}: {' & '.join(msg)}")
 
             y_true_a.append(sample["action"])
             y_pred_a.append(act_idx)
