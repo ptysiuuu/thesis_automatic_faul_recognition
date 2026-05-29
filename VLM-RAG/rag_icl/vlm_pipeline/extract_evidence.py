@@ -14,8 +14,7 @@ Usage examples:
   python extract_evidence.py --hdf5_path /path/All.hdf5 --annotations /path/All/annotations.json \
       --output_dir /path/out
 
-This script forces `use_video_mode=True` when creating the backend so each
-view is sent as a short video sequence (temporal embeddings).
+Use --video_mode to enable native video inputs for supported backends.
 """
 
 import argparse
@@ -109,6 +108,11 @@ def main():
         help="Dataset split to process when hdf5/annotations are not provided",
     )
     parser.add_argument("--model_name", default="Qwen/Qwen2.5-VL-7B-Instruct")
+    parser.add_argument(
+        "--video_mode",
+        action="store_true",
+        help="Enable native video inputs for supported backends.",
+    )
     parser.add_argument("--output_dir", default="evidence_extraction")
     parser.add_argument("--frames_per_view", type=int, default=4)
     parser.add_argument("--max_samples", type=int, default=None)
@@ -152,8 +156,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / f"evidence_{split}.jsonl"
 
-    # Start with video mode disabled for initial extraction runs
-    backend = get_backend(args.model_name)
+    backend = get_backend(args.model_name, use_video_mode=args.video_mode)
 
     # Resume logic: collect already-processed action_ids from existing file
     processed = set()

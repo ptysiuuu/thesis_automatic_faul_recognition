@@ -89,4 +89,6 @@ ALL_STRATEGIES = [
     # New architectures
     "contrastive_severity",
     "physics_severity",
+    # Multi-turn structured strategy
+    "multi_turn_var",
 ]

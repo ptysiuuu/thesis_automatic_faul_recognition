@@ -26,6 +26,10 @@ from .templates import (
     ORDINAL_SEVERITY_TMPL,
     CONTRASTIVE_SEVERITY_TMPL,
     PHYSICS_FLOW_TMPL,
+    MULTI_TURN_VAR_SYSTEM_CONTEXT,
+    MULTI_TURN_TURN1_TMPL,
+    MULTI_TURN_TURN2_TMPL,
+    MULTI_TURN_TURN3_TMPL,
 )
 from ..utils.constants import SEVERITY_CLASSES
 
@@ -327,4 +331,97 @@ def build_contrastive_severity_prompt(
 def build_physics_flow_prompt(action: str, max_disp: float, severity_list: str) -> str:
     return PHYSICS_FLOW_TMPL.format(
         action=action, max_disp=max_disp, severity_list=severity_list
+    )
+
+
+# ── Multi-Turn VAR builders ────────────────────────────────────────────────────
+
+def build_multi_turn_turn1_prompt(
+    frame_labels: List[str],
+    law12_context: str,
+) -> str:
+    """
+    Turn 1: physical description only.
+
+    Parameters
+    ----------
+    frame_labels   : List of label strings, one per frame, in presentation order.
+                     Each label carries view type, frame index, and temporal bin.
+    law12_context  : Relevant Law 12 excerpt from the RAG system.
+    """
+    labels_block = "\n".join(f"  {i+1}. {lbl}" for i, lbl in enumerate(frame_labels))
+    safe_law12 = law12_context.replace("{", "{{").replace("}", "}}")
+    safe_labels = labels_block.replace("{", "{{").replace("}", "}}")
+    return MULTI_TURN_TURN1_TMPL.format(
+        system_context=MULTI_TURN_VAR_SYSTEM_CONTEXT,
+        n_frames=len(frame_labels),
+        frame_labels=safe_labels,
+        law12_context=safe_law12,
+    )
+
+
+def build_multi_turn_turn2_prompt(
+    frame_labels: List[str],
+    turn1_description: str,
+) -> str:
+    """
+    Turn 2: forced-coverage checklist + action classification.
+
+    Parameters
+    ----------
+    frame_labels       : Labels for the 4 dense contact-clustered frames.
+    turn1_description  : Raw text response from Turn 1 (verbatim echo).
+    """
+    labels_block = "\n".join(f"  {i+1}. {lbl}" for i, lbl in enumerate(frame_labels))
+    # Escape braces in dynamic content to avoid format() errors
+    safe_desc = turn1_description.replace("{", "{{").replace("}", "}}")
+    safe_labels = labels_block.replace("{", "{{").replace("}", "}}")
+    return MULTI_TURN_TURN2_TMPL.format(
+        n_frames=len(frame_labels),
+        frame_labels=safe_labels,
+        turn1_description=safe_desc,
+    )
+
+
+def build_multi_turn_turn3_prompt(
+    frame_labels: List[str],
+    action_type: str,
+    turn1_description: str,
+    law12_ctx: str,
+    per_action_priors: dict,
+) -> str:
+    """
+    Turn 3: ordinal IFAB severity cascade.
+
+    Parameters
+    ----------
+    frame_labels       : Labels for the 4 aftermath-biased frames.
+    action_type        : Predicted action string from Turn 2.
+    turn1_description  : Physical description from Turn 1 (verbatim echo).
+    law12_ctx          : Action-specific Law 12 excerpt.
+    per_action_priors  : {severity_name: pct} distribution for this action.
+    """
+    labels_block = "\n".join(f"  {i+1}. {lbl}" for i, lbl in enumerate(frame_labels))
+    safe_desc = turn1_description.replace("{", "{{").replace("}", "}}")
+    safe_labels = labels_block.replace("{", "{{").replace("}", "}}")
+    safe_law12 = law12_ctx.replace("{", "{{").replace("}", "}}")
+    safe_action = action_type.replace("{", "{{").replace("}", "}}")
+
+    if per_action_priors:
+        dist_str = ", ".join(f"{k}: {v}%" for k, v in per_action_priors.items())
+        prior_context = (
+            f"SEVERITY CALIBRATION: For {action_type} incidents the historical "
+            f"distribution is: {dist_str}"
+        )
+        prior_context = prior_context.replace("{", "{{").replace("}", "}}")
+    else:
+        prior_context = ""
+
+    return MULTI_TURN_TURN3_TMPL.format(
+        n_frames=len(frame_labels),
+        frame_labels=safe_labels,
+        action_type=safe_action,
+        turn1_description=safe_desc,
+        law12_context=safe_law12,
+        prior_context=prior_context,
     )
