@@ -271,7 +271,7 @@ def run_multi_turn_var(
     per_action = per_action_priors.get(act_str, {})
 
     t3_prompt = build_multi_turn_turn3_prompt(
-        t3_labels=t3_labels,
+        frame_labels=t3_labels,
         action_type=act_str,
         turn1_description=description,
         law12_ctx=sev_law12,
