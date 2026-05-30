@@ -3,12 +3,12 @@ strategies/multi_turn_var.py
 ============================
 Multi-Turn VAR: 3-turn multi-view foul classification strategy.
 
-Turn 1 — Physical description only (5 frames: 2 live + 3 replay):
-  One live approach frame + one live contact frame establish spatial context.
-  One replay approach + one replay CONTACT FRAME + one replay aftermath provide
-  the primary evidence. Model produces a structured visual description — no
-  classification yet.  Separating perception from rule-application is the key
-  fix for the 42.9% tool-grounding failure observed in cos_two_stage.
+Turn 1 — Field extraction only (4 frames: 1 live + 3 replay):
+    One live approach frame establishes spatial context.
+    One replay BEFORE + one replay CONTACT FRAME + one replay AFTER provide
+    the primary evidence. Model fills a fixed field template — no
+    classification yet. Separating perception from rule-application is the key
+    fix for the 42.9% tool-grounding failure observed in cos_two_stage.
 
 Turn 2 — Forced-coverage action classification (4 dense contact frames):
   All 4 frames come from the closest replay, tightly clustered around contact.
@@ -22,8 +22,8 @@ Turn 3 — Ordinal severity cascade (4 aftermath-biased frames):
   Contact frame + three aftermath frames (0.5 / 1.0 / 1.5s after contact).
   If a second replay is available, the 1.5s frame comes from a perpendicular
   angle to improve fall-distance estimation.
-  Severity is decided via an explicit 4-step IFAB cascade that mirrors how a
-  referee actually escalates from careless → reckless → excessive.
+    Severity is decided via an explicit 4-step cascade that mirrors how a
+    referee escalates from careless → reckless → violent/excessive.
   Both the predicted action type and the Turn 1 description are echoed to
   maintain the evidential chain and prevent contradictions.
 """
@@ -39,8 +39,8 @@ from ..prompts.builders import (
     build_multi_turn_turn3_prompt,
 )
 
-
 # ── Temporal helpers ──────────────────────────────────────────────────────────
+
 
 def _temporal_bin(proportion: float) -> str:
     """Map clip proportion (0–1) to a named temporal zone."""
@@ -55,7 +55,9 @@ def _temporal_bin(proportion: float) -> str:
     return "settled"
 
 
-def _safe_frame(frames: List[Image.Image], proportion: float) -> Tuple[Image.Image, int]:
+def _safe_frame(
+    frames: List[Image.Image], proportion: float
+) -> Tuple[Image.Image, int]:
     """Return (frame, absolute_index) at a given clip proportion with clamping."""
     n = len(frames)
     idx = min(int(proportion * n), n - 1)
@@ -78,6 +80,7 @@ def _dedup_indices(raw: List[int], n_total: int, want: int) -> List[int]:
         return unique[:want]
     # Fallback: evenly-spaced indices centred on clip
     import numpy as np
+
     center = n_total // 2
     spread = max(want - 1, 1)
     start = max(0, center - spread // 2)
@@ -87,13 +90,14 @@ def _dedup_indices(raw: List[int], n_total: int, want: int) -> List[int]:
 
 # ── Frame selection for each turn ─────────────────────────────────────────────
 
+
 def _select_turn1_frames(
     fpv: List[List[Image.Image]],
 ) -> Tuple[List[Image.Image], List[str]]:
     """
-    5 frames: 2 live camera + 3 closest-replay.
+    4 frames: 1 live camera + 3 closest-replay.
 
-    Live frames establish field position and approach vector; replay frames
+    Live frame establishes field position and approach vector; replay frames
     provide the primary close-up evidence, with one frame explicitly marked as
     the CONTACT FRAME (mid-clip anchor).
     """
@@ -103,21 +107,20 @@ def _select_turn1_frames(
     frames: List[Image.Image] = []
     labels: List[str] = []
 
-    # 2 live frames: approach (~25 %) and contact (~50 %)
-    for p, desc in [(0.25, "approach — ~2 s before contact"),
-                    (0.50, "contact-window")]:
-        if live:
-            f, fi = _safe_frame(live, p)
-            frames.append(f)
-            labels.append(
-                f"[Live Camera | Frame {fi} | {_temporal_bin(p)}] — {desc}"
-            )
+    # 1 live frame: approach (~25 %)
+    if live:
+        p = 0.25
+        f, fi = _safe_frame(live, p)
+        frames.append(f)
+        labels.append(
+            f"[LIVE - APPROACH | Live Camera | Frame {fi} | {_temporal_bin(p)}]"
+        )
 
-    # 3 replay frames: 1 s before, CONTACT FRAME, 1 s after
+    # 3 replay frames: BEFORE, CONTACT FRAME, AFTER
     specs = [
-        (0.35, "approach — ~1 s before contact", False),
-        (0.50, "contact-window",                 True),   # CONTACT FRAME
-        (0.65, "immediate-aftermath — ~1 s after contact", False),
+        (0.35, "REPLAY - BEFORE", False),
+        (0.50, "REPLAY - CONTACT", True),  # CONTACT FRAME
+        (0.65, "REPLAY - AFTER", False),
     ]
     for p, desc, is_contact in specs:
         if rep1:
@@ -125,7 +128,7 @@ def _select_turn1_frames(
             frames.append(f)
             marker = " ← CONTACT FRAME" if is_contact else ""
             labels.append(
-                f"[Replay 1 | Frame {fi} | {_temporal_bin(p)}]{marker} — {desc}"
+                f"[{desc} | Replay 1 | Frame {fi} | {_temporal_bin(p)}]{marker}"
             )
 
     return frames, labels
@@ -211,6 +214,7 @@ def _select_turn3_frames(
 
 # ── Main strategy function ────────────────────────────────────────────────────
 
+
 def run_multi_turn_var(
     backend,
     frames_per_view: List[List[Image.Image]],
@@ -237,7 +241,7 @@ def run_multi_turn_var(
     if not frames_per_view:
         return -1, -1, "No frames available"
 
-    # ── Turn 1: physical description ─────────────────────────────────────────
+    # ── Turn 1: field extraction ─────────────────────────────────────────────
     t1_frames, t1_labels = _select_turn1_frames(frames_per_view)
     if not t1_frames:
         return -1, -1, "Turn 1 frame selection failed (no views)"
@@ -258,7 +262,7 @@ def run_multi_turn_var(
     t2_prompt = build_multi_turn_turn2_prompt(t2_labels, description)
     raw2 = backend.classify([], t2_prompt, extra_images=t2_frames)
     act_idx = parse_action_only(raw2)
-    act_str = ACTION_CLASSES[act_idx] if act_idx != -1 else "Dont know"
+    act_str = ACTION_CLASSES[act_idx] if act_idx != -1 else "Unknown"
 
     # ── Turn 3: ordinal severity cascade ──────────────────────────────────────
     t3_frames, t3_labels = _select_turn3_frames(frames_per_view)
@@ -266,9 +270,13 @@ def run_multi_turn_var(
         t3_frames = t1_frames
         t3_labels = t1_labels
 
-    # Use action-specific Law 12 context for severity turn
-    sev_law12 = rag.retrieve(rag.build_query(act_str))
-    per_action = per_action_priors.get(act_str, {})
+    # Use action-specific context for severity turn when available
+    if act_idx != -1:
+        sev_law12 = rag.retrieve(rag.build_query(act_str))
+        per_action = per_action_priors.get(act_str, {})
+    else:
+        sev_law12 = law12_ctx
+        per_action = {}
 
     t3_prompt = build_multi_turn_turn3_prompt(
         frame_labels=t3_labels,
@@ -281,7 +289,7 @@ def run_multi_turn_var(
     sev_idx = parse_severity_only(raw3)
 
     raw = (
-        f"TURN1 (description):\n{raw1}\n\n"
+        f"TURN1 (fields):\n{raw1}\n\n"
         f"TURN2 (action [{act_str}]):\n{raw2}\n\n"
         f"TURN3 (severity):\n{raw3}"
     )

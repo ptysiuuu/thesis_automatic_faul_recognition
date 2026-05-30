@@ -8,6 +8,7 @@ Uses base64-encoded images via data URI in image_url.
 import base64
 import os
 import re
+import time
 from io import BytesIO
 from typing import List, Optional
 
@@ -37,6 +38,8 @@ class NvidiaMistralBackend:
         Endpoint URL, default NVIDIA NIM integrate URL.
     timeout : int
         Request timeout in seconds.
+    requests_per_minute : int
+        Throttle outbound requests to stay under API RPM limits.
     max_images_per_request : int
         Cap total images per request to avoid oversized payloads.
     image_quality : int
@@ -48,8 +51,9 @@ class NvidiaMistralBackend:
         model_name: str = "mistralai/mistral-large-3-675b-instruct-2512",
         api_key: Optional[str] = None,
         base_url: str = "https://integrate.api.nvidia.com/v1/chat/completions",
-        timeout: int = 120,
-        max_images_per_request: int = 16,
+        timeout: int = 180,
+        requests_per_minute: int = 35,
+        max_images_per_request: int = 8,
         image_quality: int = 85,
     ):
         self.model_name = model_name
@@ -60,6 +64,9 @@ class NvidiaMistralBackend:
             )
         self.base_url = base_url
         self.timeout = timeout
+        self.rpm = max(1, requests_per_minute)
+        self._min_interval = 60.0 / self.rpm
+        self._last_request_time = 0.0
         self.max_images = max_images_per_request
         self.quality = image_quality
 
@@ -76,6 +83,31 @@ class NvidiaMistralBackend:
             }
         )
         return added + 1
+
+    def _rate_limit(self) -> None:
+        elapsed = time.time() - self._last_request_time
+        wait = self._min_interval - elapsed
+        if wait > 0:
+            time.sleep(wait)
+        self._last_request_time = time.time()
+
+    def _post_with_retry(self, headers: dict, payload: dict, max_retries: int = 3):
+        for attempt in range(max_retries):
+            self._rate_limit()
+            response = requests.post(
+                self.base_url,
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+            )
+            if response.status_code == 429:
+                wait = (2**attempt) * 15
+                print(f"[NVIDIA] 429 rate limit, waiting {wait}s...")
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            return response
+        raise RuntimeError("Max retries exceeded on 429")
 
     def classify(
         self,
@@ -125,16 +157,14 @@ class NvidiaMistralBackend:
         }
 
         try:
-            response = requests.post(
-                self.base_url,
-                headers=headers,
-                json=payload,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
+            response = self._post_with_retry(headers, payload)
         except requests.exceptions.Timeout:
             return f"[ERROR] NVIDIA request timed out after {self.timeout}s"
         except requests.exceptions.RequestException as e:
+            if hasattr(e, "response") and e.response is not None:
+                print(f"[NVIDIA] Response body: {e.response.text[:500]}")
+            return f"[ERROR] NVIDIA request failed: {e}"
+        except RuntimeError as e:
             return f"[ERROR] NVIDIA request failed: {e}"
 
         data = response.json()

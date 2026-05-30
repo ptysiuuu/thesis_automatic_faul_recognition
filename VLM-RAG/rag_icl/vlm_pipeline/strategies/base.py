@@ -62,9 +62,45 @@ def _sanitize_json_candidate(candidate: str) -> str:
     return "".join(res)
 
 
+def _extract_terminal_value(text: str, label: str) -> str:
+    pattern = rf"^\s*{re.escape(label)}\s*:\s*(.+?)\s*$"
+    matches = re.findall(pattern, text, flags=re.MULTILINE)
+    if matches:
+        return matches[-1].strip()
+    return ""
+
+
 def parse_response(text: str) -> Tuple[int, int]:
     """Parse VLM JSON response into (action_idx, severity_idx). Returns (-1,-1) on failure."""
     text = re.sub(r"```json\s*|\s*```", "", text).strip()
+    action_line = _extract_terminal_value(text, "Action")
+    severity_line = _extract_terminal_value(text, "Severity")
+    if action_line or severity_line:
+        best_action = -1
+        best_severity = -1
+        if action_line:
+            best_action = next(
+                (
+                    i
+                    for i, a in enumerate(ACTION_CLASSES)
+                    if a.lower() in action_line.lower()
+                    or action_line.lower() in a.lower()
+                ),
+                -1,
+            )
+        if severity_line:
+            best_severity = next(
+                (
+                    i
+                    for i, s in enumerate(SEVERITY_CLASSES)
+                    if s.lower() in severity_line.lower()
+                    or severity_line.lower() in s.lower()
+                ),
+                -1,
+            )
+        if best_action != -1 and best_severity != -1:
+            return best_action, best_severity
+
     candidates = _extract_json_candidates(text)
     if not candidates:
         return -1, -1
@@ -161,6 +197,19 @@ def parse_response(text: str) -> Tuple[int, int]:
 
 def parse_action_only(text: str) -> int:
     text = re.sub(r"```json\s*|\s*```", "", text).strip()
+    action_line = _extract_terminal_value(text, "Action")
+    if action_line:
+        idx = next(
+            (
+                i
+                for i, a in enumerate(ACTION_CLASSES)
+                if a.lower() in action_line.lower() or action_line.lower() in a.lower()
+            ),
+            -1,
+        )
+        if idx != -1:
+            return idx
+
     candidates = _extract_json_candidates(text)
     if not candidates:
         return -1
@@ -207,6 +256,20 @@ def parse_action_only(text: str) -> int:
 
 def parse_severity_only(text: str) -> int:
     text = re.sub(r"```json\s*|\s*```", "", text).strip()
+    severity_line = _extract_terminal_value(text, "Severity")
+    if severity_line:
+        idx = next(
+            (
+                i
+                for i, s in enumerate(SEVERITY_CLASSES)
+                if s.lower() in severity_line.lower()
+                or severity_line.lower() in s.lower()
+            ),
+            -1,
+        )
+        if idx != -1:
+            return idx
+
     candidates = _extract_json_candidates(text)
     if not candidates:
         return -1

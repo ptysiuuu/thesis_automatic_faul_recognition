@@ -442,6 +442,12 @@ replay system and are examining a single incident from several synchronized \
 perspectives. You must form an independent assessment of both the foul type and \
 its severity.
 
+OUTPUT CONSTRAINTS:
+- Do not reference player names, jersey numbers, or club names.
+- You do not have access to roster information.
+- Refer only to jersey colour and approximate position on the field.
+- If you cite a specific name, your response will be invalid.
+
 EIGHT FOUL CATEGORIES — with distinguishing criteria:
 
 Tackling            Player's body goes to ground or lunges HORIZONTALLY toward the ball.
@@ -477,19 +483,18 @@ ANTI-COLLAPSE WARNINGS:
 • When a player falls but contact appears minimal or non-existent → consider Dive first.
   The fall being disproportionate to the contact force is the Dive diagnostic.
 
-FOUR SEVERITY LEVELS — IFAB Law 12 language:
+FOUR SEVERITY LEVELS — referee severity language:
 
-0 = No Offence   Action does not violate the Laws of the Game. Contact was legal or
-                 the player played the ball cleanly. No free kick.
+No Offence   Action does not violate the Laws of the Game. Contact was legal or
+             the player played the ball cleanly. No free kick.
 
-1 = No Card      Player shows lack of attention or consideration when making the
-(Careless)       challenge. A free kick is awarded but no disciplinary sanction.
+No Card      Careless challenge. A free kick is awarded but no disciplinary sanction.
 
-2 = Yellow Card  Player acts with disregard for the danger to, or consequences for,
-(Reckless)       the opponent. Must be cautioned.
+Yellow Card  Reckless challenge. Player acts with disregard for the danger to, or
+             consequences for, the opponent. Must be cautioned.
 
-3 = Red Card     Player uses excessive force or endangers the safety of an opponent.
-(Violent)        Must be sent off.
+Red Card     Violent conduct or excessive force. Endangers the safety of an opponent.
+             Must be sent off.
 
 KEY SEVERITY DETERMINANTS:
 • Did the player attempt to play the ball? → MITIGATING (pushes toward No Card boundary)
@@ -501,63 +506,61 @@ KEY SEVERITY DETERMINANTS:
 MULTI_TURN_TURN1_TMPL = """\
 {system_context}
 
-=== TURN 1 OF 3 — PHYSICAL DESCRIPTION (no classification yet) ===
+=== TURN 1 OF 3 — FIELD EXTRACTION ONLY ===
 
 You are shown {n_frames} frames in the exact order listed below.
 Each frame label states: [View | Frame index | Temporal zone].
 The frame marked "← CONTACT FRAME" is the primary evidence frame.
-Ignore any generic "Live camera" label the system may add — use the labels below:
 
 {frame_labels}
 
-{law12_context}
+TASK: Fill in the fields below based ONLY on visible evidence.
+- No narrative prose.
+- Do not classify the foul type or severity.
+- Use jersey colours and approximate field position only.
 
-YOUR TASK — describe ONLY the visible physical interaction at the CONTACT FRAME.
-Do NOT classify the foul type. Do NOT suggest a card. Just describe what you see.
+Use this exact template and do not add extra lines:
 
-Answer these five questions in order:
+Challenging player jersey colour: [colour]
+Challenged player jersey colour: [colour]
+Body part making contact: [head / shoulder / upper arm / elbow / forearm / hand / chest / hip / thigh / knee / foot / boot]
+Body part receiving contact: [head / shoulder / upper arm / elbow / forearm / hand / chest / hip / thigh / knee / foot / boot]
+Approximate height of contact: [above waist / at waist / below waist / at ground level]
+Ball within one metre at contact: [yes / no / unclear]
+Challenging player on ground at contact: [yes / no]
 
-1. INITIATOR   Which player initiates the challenge? (e.g. left attacker, right defender)
-2. BODY PART   What body part does the challenging player use for contact?
-               (foot / knee / thigh / elbow / forearm / hand / shoulder / chest / torso)
-3. CONTACT     Where on the opponent's body does the contact land?
-               (feet / lower leg / thigh / hip / ribs/torso / arm / shoulder / head/face)
-4. BALL        Is the ball within playing distance at the moment of contact? (yes / no / unclear)
-5. POSTURE     Describe the challenging player's posture:
-               (horizontal slide / upright standing / jumping / from behind / from the side)
-
-If the contact is obscured in the CONTACT FRAME state which view and time window
-would better reveal it (e.g. "Replay 1 at immediate-aftermath frame would show the fall").
-
-Write a factual description — no verdict about fouls, cards, or action types.
+Final line (must be last). Use the same values as above:
+Body part: [value]. Contact location: [value]. Ball distance: [yes/no/unclear].
 """
 
 # ── Turn 2: forced-coverage action classification ─────────────────────────────
 MULTI_TURN_TURN2_TMPL = """\
-=== TURN 2 OF 3 — FOUL TYPE CLASSIFICATION (FORCED COVERAGE) ===
-
-In Turn 1 you provided this physical description:
---- TURN 1 DESCRIPTION ---
-{turn1_description}
---- END ---
+=== TURN 2 OF 3 — ACTION CLASSIFICATION (FORCED COVERAGE) ===
 
 You are now shown {n_frames} frames tightly clustered around the contact moment
 from the closest replay camera. Frames appear in order:
 
 {frame_labels}
 
+In your previous analysis you observed:
+--- TURN 1 OUTPUT (verbatim) ---
+{turn1_description}
+--- END ---
+This analysis must inform your classification below.
+If the close-up frames contradict your earlier description, explicitly note the revision before classifying.
+
 FORCED-COVERAGE CHECKLIST — complete ALL eight entries before deciding.
 For each class respond Yes / No / Uncertain with a one-phrase justification.
 Evaluate them in the order shown (groups visually similar classes together):
 
-  Tackling:           [Yes/No/Uncertain] — [player's body goes to ground horizontally?]
-  Standing tackling:  [Yes/No/Uncertain] — [foot extends to ball while player stays upright?]
-  High leg:           [Yes/No/Uncertain] — [foot raised above opponent's waist?]
-  Challenge:          [Yes/No/Uncertain] — [shoulder-to-shoulder body contest for ball?]
-  Pushing:            [Yes/No/Uncertain] — [open palm/forearm/torso shove sideways/forward?]
-  Holding:            [Yes/No/Uncertain] — [sustained grip of shirt/arm/body?]
-  Elbowing:           [Yes/No/Uncertain] — [elbow primary contact point at head/face?]
-  Dive:               [Yes/No/Uncertain] — [fall clearly disproportionate to contact force?]
+Tackling:           [Yes/No/Uncertain] — [player's body goes to ground horizontally?]
+Standing tackling:  [Yes/No/Uncertain] — [foot extends to ball while player stays upright?]
+High leg:           [Yes/No/Uncertain] — [foot raised above opponent's waist?]
+Challenge:          [Yes/No/Uncertain] — [shoulder-to-shoulder body contest for ball?]
+Pushing:            [Yes/No/Uncertain] — [open palm/forearm/torso shove sideways/forward?]
+Holding:            [Yes/No/Uncertain] — [sustained grip of shirt/arm/body?]
+Elbowing:           [Yes/No/Uncertain] — [elbow primary contact point at head/face?]
+Dive:               [Yes/No/Uncertain] — [fall clearly disproportionate to contact force?]
 
 ANTI-MAJORITY-CLASS CHECK: Standing tackling and Tackling are NOT the automatic default.
 If classifying as either, verify: (a) player's momentum was toward the ball, and
@@ -567,30 +570,24 @@ DIVE CHECK: When a player falls but contact appears minimal or non-existent, con
 Dive means the falling player exaggerated or fabricated the contact. The fall is
 disproportionate to the actual force — look at the aftermath frames for confirmation.
 
-Respond with ONLY this JSON (complete the checklist field before writing "action"):
-{{
-  "checklist": {{
-    "Tackling":          "<Yes/No/Uncertain> — <one phrase>",
-    "Standing tackling": "<Yes/No/Uncertain> — <one phrase>",
-    "High leg":          "<Yes/No/Uncertain> — <one phrase>",
-    "Challenge":         "<Yes/No/Uncertain> — <one phrase>",
-    "Pushing":           "<Yes/No/Uncertain> — <one phrase>",
-    "Holding":           "<Yes/No/Uncertain> — <one phrase>",
-    "Elbowing":          "<Yes/No/Uncertain> — <one phrase>",
-    "Dive":              "<Yes/No/Uncertain> — <one phrase>"
-  }},
-  "action": "<exactly one of: Tackling, Standing tackling, High leg, Holding, Pushing, Elbowing, Challenge, Dive>",
-  "reasoning": "<one sentence citing the key visual evidence from the Turn 1 description and these frames>"
-}}"""
+You must select exactly one of these eight options. "Dont know" is not an available answer.
+If you are uncertain between two classes, select the one with stronger visual evidence
+from the frames and state which alternative you considered.
+
+Final line (must be last):
+Action: [Tackling | Standing tackling | High leg | Holding | Pushing | Elbowing | Challenge | Dive]
+"""
 
 # ── Turn 3: ordinal severity cascade ─────────────────────────────────────────
 MULTI_TURN_TURN3_TMPL = """\
-=== TURN 3 OF 3 — SEVERITY ASSESSMENT (ORDINAL CASCADE) ===
+=== TURN 3 OF 3 — SEVERITY ASSESSMENT ===
 
-Turn 2 action classification: {action_type}
+You classified this as {action_type}.
+The contact you described in Turn 1 was {contact_summary}.
+Use both to assess severity.
 
-Physical description from Turn 1:
---- TURN 1 DESCRIPTION ---
+Physical description from Turn 1 (verbatim):
+--- TURN 1 OUTPUT ---
 {turn1_description}
 --- END ---
 
@@ -599,42 +596,26 @@ Use them to observe fall trajectory, fall distance, and recovery:
 
 {frame_labels}
 
+Reference guidance:
 {law12_context}
 
-Work through the four-step IFAB severity cascade for "{action_type}":
+Assess severity using plain-language referee terms:
+- careless (no card)
+- reckless (yellow card)
+- violent (red card)
 
-STEP 1 — OFFENCE THRESHOLD
-Was there a violation of the Laws of the Game?
-Consider: did the player play the ball cleanly, or was there illegal contact?
-→ If NO offence: answer "No Offence" and proceed to the final JSON.
-
-STEP 2 — FORCE QUANTIFICATION (only if Step 1 = offence)
-Characterise the force level:
-  (a) approach speed and momentum of the challenging player (use approach frames)
-  (b) whether contact was incidental or the primary intent of the challenge
-  (c) vulnerability of the body part contacted (head/face = higher danger)
-  (d) what happened to the opponent in the aftermath frames above
-→ Rate: minimal / moderate / excessive
-
-STEP 3 — SEVERITY MAPPING (IFAB Law 12)
-  Minimal force                                → No Card   (careless, no sanction)
-  Moderate force + disregard for opponent      → Yellow Card (reckless, caution)
-  Excessive force or endangering safety        → Red Card  (violent, send-off)
-
-STEP 4 — BALL-PLAY CONSIDERATION
-Did the player attempt to play the ball?
-Attempting to play the ball MITIGATES toward No Card / Yellow boundary,
-but does NOT reduce a Red Card where force is already excessive.
+Decision steps:
+1) Was there illegal contact or a foul? If no, the severity is No Offence.
+2) If foul: classify force and danger using the frames and Turn 1 evidence.
+3) Map to severity:
+   - Careless -> No Card
+   - Reckless -> Yellow Card
+   - Violent / excessive force or endangering safety -> Red Card
 
 {prior_context}
 
-Respond with ONLY this JSON:
-{{
-  "step1_offence":    "<yes — foul committed / no — clean play>",
-  "step2_force":      "<minimal / moderate / excessive / N/A>",
-  "step3_ifab":       "<No offence / No card / Yellow card / Red card>",
-  "step4_ball_play":  "<yes / no / unclear>",
-  "severity":         "<No offence / No card / Yellow card / Red card>",
-  "severity_level":   <0, 1, 2, or 3>,
-  "reasoning":        "<one sentence citing approach speed and/or aftermath evidence>"
-}}"""
+Write a brief rationale, then end with the terminal line.
+
+Final line (must be last):
+Severity: [No Offence / No Card / Yellow Card / Red Card]
+"""

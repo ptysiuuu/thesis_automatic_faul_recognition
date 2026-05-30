@@ -6,6 +6,7 @@ Each builder takes structured arguments and returns a prompt string.
 """
 
 from typing import List, Dict
+import re
 from .templates import (
     ACTION_LIST_STR,
     SEVERITY_LIST_STR,
@@ -43,6 +44,14 @@ def _per_action_prior_str(per_action_priors: dict) -> str:
     for action, priors in sorted(per_action_priors.items()):
         lines.append(f"  {action}: {_prior_str(priors)}")
     return "\n".join(lines)
+
+
+def _extract_turn1_field(turn1_description: str, field_name: str) -> str:
+    pattern = rf"^\s*{re.escape(field_name)}\s*:\s*(.+?)\s*$"
+    matches = re.findall(pattern, turn1_description, flags=re.MULTILINE)
+    if matches:
+        return matches[-1].strip()
+    return "unknown"
 
 
 # ── Row 0 ──────────────────────────────────────────────────────────────────────
@@ -336,6 +345,7 @@ def build_physics_flow_prompt(action: str, max_disp: float, severity_list: str) 
 
 # ── Multi-Turn VAR builders ────────────────────────────────────────────────────
 
+
 def build_multi_turn_turn1_prompt(
     frame_labels: List[str],
     law12_context: str,
@@ -407,6 +417,14 @@ def build_multi_turn_turn3_prompt(
     safe_law12 = law12_ctx.replace("{", "{{").replace("}", "}}")
     safe_action = action_type.replace("{", "{{").replace("}", "}}")
 
+    body_part = _extract_turn1_field(turn1_description, "Body part making contact")
+    contact_part = _extract_turn1_field(
+        turn1_description, "Body part receiving contact"
+    )
+    height = _extract_turn1_field(turn1_description, "Approximate height of contact")
+    contact_summary = f"body part {body_part} contacted {contact_part} at {height}"
+    safe_contact_summary = contact_summary.replace("{", "{{").replace("}", "}}")
+
     if per_action_priors:
         dist_str = ", ".join(f"{k}: {v}%" for k, v in per_action_priors.items())
         prior_context = (
@@ -422,6 +440,7 @@ def build_multi_turn_turn3_prompt(
         frame_labels=safe_labels,
         action_type=safe_action,
         turn1_description=safe_desc,
+        contact_summary=safe_contact_summary,
         law12_context=safe_law12,
         prior_context=prior_context,
     )
