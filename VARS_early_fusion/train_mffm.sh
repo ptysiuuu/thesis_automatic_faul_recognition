@@ -40,5 +40,6 @@ python main.py \
     --ema_decay        0.999 \
     --freeze_epoch     5 \
     --model_name       VARS_tadaformer_mffm \
+	--no_pos_weight \
     --GPU              0 \
     --max_num_worker   16
