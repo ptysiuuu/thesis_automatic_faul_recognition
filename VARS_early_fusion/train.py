@@ -219,9 +219,9 @@ def _decode_predictions(preds_sev, preds_act, actions, action_ids):
 # ---------------------------------------------------------------------------
 
 
-def _run_with_tta(model, mvclips):
-    o1 = model(mvclips)
-    o2 = model(mvclips.flip(-1))
+def _run_with_tta(model, mvclips, text_features=None):
+    o1 = model(mvclips, text_features=text_features)
+    o2 = model(mvclips.flip(-1), text_features=text_features)
     sev = (o1[0] + o2[0]) / 2
     act = (o1[1] + o2[1]) / 2
     return sev, act, o1[2], o1[3], o1[4], o1[5]
@@ -495,16 +495,32 @@ def _train_epoch(
 
     with ctx:
         for batch in dataloader:
-            (
-                targets_sev,
-                targets_act,
-                targets_contact,
-                targets_bodypart,
-                targets_try_to_play,
-                targets_handball,
-                mvclips,
-                action_ids,
-            ) = batch
+            if len(batch) == 8:
+                (
+                    targets_sev,
+                    targets_act,
+                    targets_contact,
+                    targets_bodypart,
+                    targets_try_to_play,
+                    targets_handball,
+                    mvclips,
+                    action_ids,
+                ) = batch
+                text_feat = None
+            elif len(batch) == 9:
+                (
+                    targets_sev,
+                    targets_act,
+                    targets_contact,
+                    targets_bodypart,
+                    targets_try_to_play,
+                    targets_handball,
+                    mvclips,
+                    action_ids,
+                    text_feat,
+                ) = batch
+            else:
+                raise ValueError(f"Unexpected batch size: {len(batch)}")
 
             targets_sev = targets_sev.cuda()
             targets_act = targets_act.cuda()
@@ -513,6 +529,8 @@ def _train_epoch(
             targets_try_to_play = targets_try_to_play.cuda()
             targets_handball = targets_handball.cuda()
             mvclips = mvclips.cuda().float()
+            if text_feat is not None:
+                text_feat = text_feat.cuda().float()
 
             if pbar is not None:
                 pbar.update()
@@ -528,10 +546,10 @@ def _train_epoch(
                     out_bodypart,
                     out_try_to_play,
                     out_handball,
-                ) = _run_with_tta(model, mvclips)
+                ) = _run_with_tta(model, mvclips, text_features=text_feat)
                 attention = None
             else:
-                full_out = model(mvclips)
+                full_out = model(mvclips, text_features=text_feat)
                 out_sev, out_act = full_out[0], full_out[1]
                 out_contact, out_bodypart = full_out[2], full_out[3]
                 out_try_to_play, out_handball = full_out[4], full_out[5]
@@ -660,13 +678,27 @@ def evaluation(dataloader, model, ema=None, set_name="test", use_tta=True):
 
     with torch.no_grad():
         for batch in dataloader:
-            mvclips = batch[6].cuda().float()
-            action_ids = batch[7]
+            if len(batch) == 8:
+                mvclips = batch[6]
+                action_ids = batch[7]
+                text_feat = None
+            elif len(batch) == 9:
+                mvclips = batch[6]
+                action_ids = batch[7]
+                text_feat = batch[8]
+            else:
+                raise ValueError(f"Unexpected batch size: {len(batch)}")
+
+            mvclips = mvclips.cuda().float()
+            if text_feat is not None:
+                text_feat = text_feat.cuda().float()
 
             if use_tta:
-                out_sev, out_act, *_ = _run_with_tta(model, mvclips)
+                out_sev, out_act, *_ = _run_with_tta(
+                    model, mvclips, text_features=text_feat
+                )
             else:
-                out = model(mvclips)
+                out = model(mvclips, text_features=text_feat)
                 out_sev, out_act = out[0], out[1]
 
             preds_sev = ordinal_predict(out_sev.cpu())

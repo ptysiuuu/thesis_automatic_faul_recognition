@@ -7,6 +7,7 @@ import warnings
 import logging
 import h5py
 import os
+import numpy as np
 
 warnings.filterwarnings("ignore", category=UserWarning)
 logging.getLogger("torchvision").setLevel(logging.ERROR)
@@ -28,6 +29,7 @@ class MultiViewDataset(Dataset):
         fusion_mode=False,
         center_weighted=False,
         backbone_type=None,
+        descriptions_path: str = None,
     ):
         self.split = split
         self.start = start
@@ -40,6 +42,8 @@ class MultiViewDataset(Dataset):
         self.center_weighted = center_weighted
         self.backbone_type = backbone_type
         self.vjepa_num_frames = 8 if backbone_type == "intern_video2_dist_b" else 16
+        self.text_embeddings = None
+        self._missing_text_embeddings = set()
 
         if split != "Chall":
             (
@@ -80,6 +84,22 @@ class MultiViewDataset(Dataset):
         hdf5_path = os.path.join(HDF5_ROOT, f"{split}.hdf5")
         self._hdf5_path = hdf5_path if os.path.exists(hdf5_path) else None
         self._hdf5 = None
+
+        if descriptions_path:
+            if not os.path.exists(descriptions_path):
+                logging.warning(
+                    f"Text embeddings not found: {descriptions_path}"
+                )
+            else:
+                self.text_embeddings = {}
+                with h5py.File(descriptions_path, "r") as f:
+                    for key in f.keys():
+                        self.text_embeddings[key] = np.asarray(
+                            f[key], dtype=np.float32
+                        )
+                logging.info(
+                    f"Loaded {len(self.text_embeddings)} text embeddings from {descriptions_path}"
+                )
 
         print(
             f"Loaded {self.length} actions for {split} "
@@ -298,8 +318,21 @@ class MultiViewDataset(Dataset):
         else:
             clip_out = videos
 
+        text_feature = None
+        if self.text_embeddings is not None:
+            action_id = available_clips[0].split(os.sep)[-2]
+            emb = self.text_embeddings.get(action_id)
+            if emb is None:
+                if action_id not in self._missing_text_embeddings:
+                    logging.warning(
+                        f"Missing text embedding for {action_id}; using zeros"
+                    )
+                    self._missing_text_embeddings.add(action_id)
+                emb = np.zeros((768,), dtype=np.float32)
+            text_feature = torch.from_numpy(emb).float()
+
         if self.split != "Chall":
-            return (
+            output = (
                 self.labels_offence_severity[index][0],  # (4,) one-hot
                 self.labels_action[index][0],  # (8,) one-hot
                 torch.tensor(self.labels_contact[index], dtype=torch.float),
@@ -309,9 +342,12 @@ class MultiViewDataset(Dataset):
                 clip_out.clone(),
                 self.number_of_actions[index],
             )
+            if text_feature is not None:
+                output = output + (text_feature,)
+            return output
         else:
             dummy = torch.tensor(0.0)
-            return (
+            output = (
                 dummy,
                 dummy,
                 dummy,
@@ -321,6 +357,9 @@ class MultiViewDataset(Dataset):
                 clip_out.clone(),
                 str(index),
             )
+            if text_feature is not None:
+                output = output + (text_feature,)
+            return output
 
     def __len__(self):
         return self.length

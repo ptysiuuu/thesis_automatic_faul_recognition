@@ -217,6 +217,8 @@ def main(args):
     train_all_but_test = args.train_all_but_test
     clip_weight = args.clip_weight
     clip_embeddings_path = args.clip_embeddings_path
+    use_mffm = args.use_mffm
+    descriptions_path = args.descriptions_path
 
     number_of_frames = int(
         (end_frame - start_frame) / (((end_frame - start_frame) / 25) * fps)
@@ -318,6 +320,7 @@ def main(args):
         transform_model=transforms_model,
         fusion_mode=fusion_mode,
         backbone_type=pre_model,
+        descriptions_path=descriptions_path,
     )
 
     if only_evaluation == 0:
@@ -476,13 +479,18 @@ def main(args):
             cascade_severity=cascade_severity,
             use_text_bridge=use_text_bridge,
             clip_embeddings_path=clip_embeddings_path,
+            use_mffm=use_mffm,
         ).cuda()
         backbone_prefix = "aggregation_model.model."
         logging.info(
             f"Multi-view mode: MVNetwork (backbone={pre_model}, agr={pooling_type}, "
             f"topology={graph_topology if pooling_type == 'gat' else 'n/a'}, "
-            f"cascade_severity={cascade_severity}, text_bridge={use_text_bridge})"
+            f"cascade_severity={cascade_severity}, text_bridge={use_text_bridge}, "
+            f"mffm={use_mffm})"
         )
+
+    if use_mffm and not descriptions_path:
+        logging.warning("--use_mffm enabled without --descriptions_path")
 
     if path_to_model_weights != "":
         load = torch.load(path_to_model_weights)
@@ -814,6 +822,18 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Enable per-sample CLIP text conditioning (multi-view transformer only)",
+    )
+    parser.add_argument(
+        "--use_mffm",
+        action="store_true",
+        default=False,
+        help="Enable MFFM fusion of visual features with text embeddings",
+    )
+    parser.add_argument(
+        "--descriptions_path",
+        default=None,
+        type=str,
+        help="Path to precomputed text embeddings HDF5",
     )
     parser.add_argument(
         "--graph_topology",
