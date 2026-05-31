@@ -19,6 +19,14 @@ PROMPT = (
     "upper body (torso, arms, head, shoulders) or lower body (legs, feet, knees)."
 )
 
+# Some Qwen2.5-VL finetunes ship with a broken processor config.
+# Fall back to the base processor in those cases.
+PROCESSOR_FALLBACK = {
+    "Video-R1/Video-R1-7B",
+    "Video-R1/Qwen2.5-VL-7B-COT-SFT",
+}
+BASE_PROCESSOR = "Qwen/Qwen2.5-VL-7B-Instruct"
+
 
 class _Timeout:
     def __init__(self, seconds: Optional[int]):
@@ -100,10 +108,37 @@ def _load_qwen(model_name: str, quantization: str):
                 llm_int8_threshold=6.0,
             )
 
-    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        model_name, **model_kwargs
+    if model_name in PROCESSOR_FALLBACK:
+        logging.info(
+            "Qwen processor config missing for %s; using %s instead.",
+            model_name,
+            BASE_PROCESSOR,
+        )
+        processor_source = BASE_PROCESSOR
+    else:
+        processor_source = model_name
+
+    processor = AutoProcessor.from_pretrained(
+        processor_source, trust_remote_code=True
     )
+
+    try:
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            model_name, **model_kwargs
+        )
+    except OSError as exc:
+        msg = str(exc)
+        if "does not appear to have files named" in msg and "safetensors" in msg:
+            logging.warning(
+                "Qwen safetensors shards missing; retrying with use_safetensors=False"
+            )
+            model_kwargs_fallback = dict(model_kwargs)
+            model_kwargs_fallback["use_safetensors"] = False
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                model_name, **model_kwargs_fallback
+            )
+        else:
+            raise
     model.eval()
     return model, processor
 
