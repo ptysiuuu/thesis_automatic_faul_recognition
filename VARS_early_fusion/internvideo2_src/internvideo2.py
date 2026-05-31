@@ -284,7 +284,7 @@ class Attention(nn.Module):
             qkv = qkv.to(torch.float16)
         dropout_val = self.attn_drop.p if self.training else 0.0
         context = flash_attn_qkvpacked_func(
-            qkv, dropout_p=dropout_val, casual=self.causal
+            qkv, dropout_p=dropout_val, causal=self.causal
         )
         context = context.to(orig_dtype)
 
