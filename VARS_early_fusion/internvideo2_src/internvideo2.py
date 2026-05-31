@@ -10,7 +10,7 @@ from functools import partial
 from einops import rearrange
 
 from pos_embed import get_3d_sincos_pos_embed, get_2d_sincos_pos_embed, get_1d_sincos_pos_embed
-from flash_attention_class import FlashAttention
+from flash_attn import flash_attn_qkvpacked_func
 try:
     from flash_attn.modules.mlp import FusedMLP
     from flash_attn.ops.rms_norm import DropoutAddRMSNorm
@@ -169,7 +169,7 @@ class Attention(nn.Module):
         self.use_flash_attn = use_flash_attn
         if use_flash_attn:
             self.causal = causal
-            self.inner_attn = FlashAttention(attention_dropout=attn_drop)
+            # self.inner_attn = FlashAttention(attention_dropout=attn_drop)
         
         self.qk_normalization = qk_normalization
         self.q_norm = norm_layer(dim) if qk_normalization else nn.Identity()
@@ -211,9 +211,21 @@ class Attention(nn.Module):
                 k = self.k_norm(k.flatten(-2, -1)).view(k.shape)
             qkv = torch.stack([q, k, v], dim=2)
         
-        context, _ = self.inner_attn(
-            qkv, key_padding_mask=key_padding_mask, need_weights=need_weights, causal=self.causal
-        )
+        # context, _ = self.inner_attn(
+        #     qkv, key_padding_mask=key_padding_mask, need_weights=need_weights, causal=self.causal
+        # )
+
+	orig_dtype = qkv.dtype
+	if orig_dtype not in [torch.float16, torch.bfloat16]:
+		qkv = qkv.to(torch.float16)
+	dropout_val = self.attn_drop.p if self.training else 0.0
+	context = flash_attn_qkvpacked_func(
+		qkv,
+		dropout_p=dropout_val,
+		casual=self.casual
+	)
+	context = context.to(orig_dtype)
+
         outs = self.proj(rearrange(context, "b s h d -> b s (h d)"))
         outs = self.proj_drop(outs)
         return outs
@@ -271,7 +283,7 @@ class Block(nn.Module):
         
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
-        if use_fused_mlp:
+        if use_fused_mlp and FusedMLP is not None:
             self.mlp = FusedMLP(in_features=dim, hidden_features=mlp_hidden_dim, heuristic=fused_mlp_heuristic)
         else:
             self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
@@ -371,14 +383,14 @@ class InternVideo2(nn.Module):
         ):
         super().__init__()
         
-        assert use_flash_attn == use_fused_rmsnorm == use_fused_mlp, print(
-            'use_flash_attn, use_fused_rmsnorm and use_fused_mlp should be consistent')
+        # assert use_flash_attn == use_fused_rmsnorm == use_fused_mlp, print(
+        #    'use_flash_attn, use_fused_rmsnorm and use_fused_mlp should be consistent')
         print(mlp_ratio)
         
         self.use_flash_attn = use_flash_attn
         self.embed_dim = embed_dim
         
-        if use_fused_rmsnorm:
+        if use_fused_rmsnorm and DropoutAddRMSNorm is not None:
             norm_layer_for_blocks = partial(DropoutAddRMSNorm, eps=1e-6, prenorm=True)
         else:
             norm_layer_for_blocks = partial(RMSNorm, eps=1e-6)

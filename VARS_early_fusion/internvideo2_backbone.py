@@ -35,8 +35,8 @@ class InternVideo2DistBBackbone(nn.Module):
             num_frames=num_frames,
             tubelet_size=1,
             use_flash_attn=True,
-            use_fused_mlp=False,
-            use_fused_rmsnorm=False,
+            use_fused_mlp=True,
+            use_fused_rmsnorm=True,
             sep_pos_embed=False,
             num_classes=400,        # placeholder; head weights are never used
             use_checkpoint=False,
