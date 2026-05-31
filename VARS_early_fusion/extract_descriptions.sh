@@ -15,7 +15,7 @@ OUTPUT_H5="${OUT_DIR}/text_embeddings.h5"
 OUTPUT_JSON="${OUT_DIR}/text_descriptions.json"
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
-conda activate vlm32b
+conda activate /net/tscratch/people/plgaszos/conda_envs/vlm32b
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion
 
 python extract_descriptions.py \
