@@ -259,6 +259,13 @@ class MVNetwork(torch.nn.Module):
             self.feat_dim = 768
             self._tokens_per_view = getattr(network, "tokens_per_view", None)
 
+        elif net_name == "intern_video2_dist_b":
+            from internvideo2_backbone import InternVideo2DistBBackbone
+
+            network = InternVideo2DistBBackbone(num_frames=8)
+            self.feat_dim = 768
+            # _tokens_per_view stays None → T_max=8 default in TransformerAggregate
+
         else:
             print(
                 f"Warning: unknown backbone '{net_name}', falling back to r2plus1d_18"

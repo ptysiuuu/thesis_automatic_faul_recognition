@@ -34,6 +34,7 @@ _TORCHVISION_MODELS = {
     "mvit_v1_b",
     "tadaformer_b16",
     "vjepa21_vitb",
+    "intern_video2_dist_b",
 }
 HIERA_MODELS = {
     "hiera_base_16x224",
@@ -113,6 +114,21 @@ class VJEPA21Transform:
         x = self.crop(x)
         x = self.normalize(x)
         return x
+
+
+class InternVideo2Transform:
+    """ImageNet normalisation for InternVideo2 dist-B/14."""
+
+    def __init__(self, size: int = 224):
+        self.resize = transforms.Resize(size, antialias=True)
+        self.crop = transforms.CenterCrop(size)
+        self.normalize = transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        )
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        return self.normalize(self.crop(self.resize(x)))
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +298,7 @@ def main(args):
         "tadaformer_b16": TAdaFormerTransform(size=224),
         **{k: HieraTransform(size=224) for k in HIERA_MODELS},
         "vjepa21_vitb": VJEPA21Transform(size=384),
+        "intern_video2_dist_b": InternVideo2Transform(size=224),
     }
     # Early fusion always uses MViT-v2-S weights transforms (backbone is hardcoded).
     transforms_model = (
