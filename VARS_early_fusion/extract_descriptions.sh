@@ -9,6 +9,9 @@
 #SBATCH --time=04:00:00
 #SBATCH --output=extract_descriptions_%j.out
 
+export HF_HOME=/net/tscratch/people/plgaszos/.cache/huggingface
+export TRANSFORMERS_CACHE=$HF_HOME
+
 HDF5_ROOT="/net/tscratch/people/plgaszos/SoccerNet_HDF5"
 OUT_DIR="/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/features"
 OUTPUT_H5="${OUT_DIR}/text_embeddings.h5"
