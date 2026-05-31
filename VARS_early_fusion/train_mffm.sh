@@ -7,20 +7,19 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --time=20:00:00
-#SBATCH --output=VARS_tada_mffm_%x_%j.out
+#SBATCH --output=VARS_tada_mffm_%j.out
 
 DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
-DESC_PATH="/path/to/text_embeddings.h5"
+DESC_PATH="/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/features/text_embeddings.h5"
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
-conda activate vars
+conda activate /net/tscratch/people/plgaszos/conda_envs/vlm32b
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion
 
 python main.py \
     --path             "$DATASET_PATH" \
     --pre_model        tadaformer_b16 \
     --pooling_type     transformer \
-    --cascade_severity \
     --use_mffm \
     --descriptions_path "$DESC_PATH" \
     --batch_size       2 \
@@ -28,19 +27,18 @@ python main.py \
     --LR               5e-5 \
     --weight_decay     1e-3 \
     --max_epochs       30 \
-    --patience         999 \
+    --patience         8 \
     --num_views        5 \
-    --fps              25 \
+    --fps              12 \
     --start_frame      58 \
     --end_frame        92 \
     --data_aug         Yes \
     --aug_preset       default \
     --weighted_loss    Yes \
     --balanced_sampler Yes \
-    --aux_weight       0.3 \
+    --aux_weight       0.2 \
     --ema_decay        0.999 \
     --freeze_epoch     5 \
-    --train_all_but_test \
     --model_name       VARS_tadaformer_mffm \
     --GPU              0 \
     --max_num_worker   16
