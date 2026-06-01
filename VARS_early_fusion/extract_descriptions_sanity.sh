@@ -27,6 +27,6 @@ python extract_descriptions.py \
     --output_json features/text_descriptions_sanity.json \
     --quantization none \
 	--max_new_tokens 60 \
-    --num_frames 8 \
+    --num_frames 16 \
     --max_actions 5 \
     --timeout_s 60
