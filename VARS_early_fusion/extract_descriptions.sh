@@ -22,9 +22,10 @@ conda activate /net/tscratch/people/plgaszos/conda_envs/vlm32b
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion
 
 python extract_descriptions.py \
-    --hdf5_root "$HDF5_ROOT" \
-    --output_hdf5 "$OUTPUT_H5" \
-    --output_json "$OUTPUT_JSON" \
+    --data_root /net/tscratch/people/plgaszos/SoccerNet_Data \
+    --output_hdf5 features/text_embeddings.h5 \
+    --output_json features/text_descriptions.json \
     --quantization none \
-    --max_new_tokens 60
-    --timeout_s 30
+	--num_frames 8 \
+    --max_new_tokens 60 \
+    --timeout_s 60
