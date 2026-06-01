@@ -211,6 +211,31 @@ class TransformerAggregate(nn.Module):
         nn.init.trunc_normal_(self.temporal_embeds, std=0.02)
 
     def forward(self, mvimages):
+        tokens, pad_token_mask, temporal_weights = self._build_tokens(mvimages)
+        B = tokens.shape[0]
+
+        cls_tokens = self.cls_token.expand(B, -1, -1)
+        x = torch.cat([cls_tokens, tokens], dim=1)
+        cls_mask = torch.zeros((B, 1), dtype=torch.bool, device=mvimages.device)
+        padding_mask = torch.cat([cls_mask, pad_token_mask], dim=1)
+
+        x = self.transformer(x, src_key_padding_mask=padding_mask)
+        return x[:, 0], temporal_weights  # return weights for visualization + loss
+
+    def get_tokens(self, mvimages):
+        tokens, pad_token_mask, temporal_weights = self._build_tokens(mvimages)
+        B = tokens.shape[0]
+
+        cls_tokens = self.cls_token.expand(B, -1, -1)
+        x = torch.cat([cls_tokens, tokens], dim=1)
+        cls_mask = torch.zeros((B, 1), dtype=torch.bool, device=mvimages.device)
+        padding_mask = torch.cat([cls_mask, pad_token_mask], dim=1)
+
+        x = self.transformer(x, src_key_padding_mask=padding_mask)
+        token_out = x[:, 1:]
+        return token_out, pad_token_mask, temporal_weights
+
+    def _build_tokens(self, mvimages):
         B, V, *_ = mvimages.shape
 
         raw = unbatch_tensor(
@@ -267,15 +292,8 @@ class TransformerAggregate(nn.Module):
         ].unsqueeze(0)
 
         tokens = raw.flatten(1, 2)  # [B, V*T', D]
-
         pad_token_mask = view_mask.unsqueeze(2).expand(-1, -1, T).flatten(1, 2)
-        cls_tokens = self.cls_token.expand(B, -1, -1)
-        x = torch.cat([cls_tokens, tokens], dim=1)
-        cls_mask = torch.zeros((B, 1), dtype=torch.bool, device=mvimages.device)
-        padding_mask = torch.cat([cls_mask, pad_token_mask], dim=1)
-
-        x = self.transformer(x, src_key_padding_mask=padding_mask)
-        return x[:, 0], temporal_weights  # return weights for visualization + loss
+        return tokens, pad_token_mask, temporal_weights
 
 
 class CrossAttentionAggregate(nn.Module):

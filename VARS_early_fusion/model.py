@@ -298,10 +298,27 @@ class MVNetwork(torch.nn.Module):
         if self.mffm is None or text_features is None:
             return self.mvnetwork(mvimages)
 
-        pooled_view, attention = self.mvnetwork.aggregation_model(mvimages)
-        visual = pooled_view.unsqueeze(1)
+        agg = self.mvnetwork.aggregation_model
         text = text_features.unsqueeze(1)
-        fused = self.mffm(visual, text)
+
+        if hasattr(agg, "get_tokens"):
+            token_seq, token_mask, attention = agg.get_tokens(mvimages)
+            fused_tokens = self.mffm(token_seq, text, visual_pad_mask=token_mask)
+
+            if token_mask is not None:
+                fused_tokens = fused_tokens.masked_fill(
+                    token_mask.unsqueeze(-1), 0.0
+                )
+                valid_counts = (
+                    (~token_mask).float().sum(dim=1, keepdim=True).clamp(min=1.0)
+                )
+                fused = fused_tokens.sum(dim=1) / valid_counts
+            else:
+                fused = fused_tokens.mean(dim=1)
+        else:
+            pooled_view, attention = agg(mvimages)
+            visual = pooled_view.unsqueeze(1)
+            fused = self.mffm(visual, text).squeeze(1)
 
         inter = self.mvnetwork.inter(fused)
         clip_proj = None

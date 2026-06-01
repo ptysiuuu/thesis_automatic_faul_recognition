@@ -21,10 +21,22 @@ class _MFFMLayer(nn.Module):
             nn.Linear(dim * 4, dim),
         )
 
-    def forward(self, visual: torch.Tensor, text: torch.Tensor) -> torch.Tensor:
-        # visual: [B, 1, D], text: [B, 1, D]
+    def forward(
+        self,
+        visual: torch.Tensor,
+        text: torch.Tensor,
+        visual_pad_mask: torch.Tensor = None,
+    ) -> torch.Tensor:
+        # visual: [B, N, D], text: [B, M, D]
+        # visual_pad_mask: [B, N] where True marks padded tokens
         v_norm = self.norm_self(visual)
-        v_attn, _ = self.self_attn(v_norm, v_norm, v_norm, need_weights=False)
+        v_attn, _ = self.self_attn(
+            v_norm,
+            v_norm,
+            v_norm,
+            key_padding_mask=visual_pad_mask,
+            need_weights=False,
+        )
         visual = visual + v_attn
 
         q = self.norm_cross_q(visual)
@@ -40,9 +52,9 @@ class MultiModalFeatureFusionModule(nn.Module):
     """
     Decoder-style fusion between visual and text features.
 
-    visual: [B, 1, D]
-    text:   [B, 1, D]
-    output: [B, D]
+    visual: [B, N, D]
+    text:   [B, M, D]
+    output: [B, N, D]
     """
 
     def __init__(self, dim: int = 768, num_layers: int = 2, num_heads: int = 8):
@@ -52,13 +64,21 @@ class MultiModalFeatureFusionModule(nn.Module):
             [_MFFMLayer(dim=dim, num_heads=num_heads) for _ in range(num_layers)]
         )
 
-    def forward(self, visual: torch.Tensor, text: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        visual: torch.Tensor,
+        text: torch.Tensor,
+        visual_pad_mask: torch.Tensor = None,
+    ) -> torch.Tensor:
         if visual.dim() != 3 or text.dim() != 3:
-            raise ValueError("Expected visual/text with shape [B, 1, D]")
+            raise ValueError("Expected visual/text with shape [B, N, D]")
         if visual.shape[-1] != self.dim or text.shape[-1] != self.dim:
             raise ValueError("visual/text last dimension must match dim")
+        if visual_pad_mask is not None:
+            if visual_pad_mask.dim() != 2 or visual_pad_mask.shape[0] != visual.shape[0]:
+                raise ValueError("visual_pad_mask must be [B, N]")
 
         x = visual
         for layer in self.layers:
-            x = layer(x, text)
-        return x.squeeze(1)
+            x = layer(x, text, visual_pad_mask=visual_pad_mask)
+        return x
