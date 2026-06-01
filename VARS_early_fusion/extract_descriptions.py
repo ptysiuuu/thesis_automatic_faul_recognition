@@ -7,16 +7,15 @@ from typing import Dict, List, Optional, Tuple
 
 import h5py
 import numpy as np
-from PIL import Image
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
 
 PROMPT = (
-    "Describe the foul action in this video. Identify which body parts make "
-    "contact between the players, and state whether the contact occurs in the "
-    "upper body (torso, arms, head, shoulders) or lower body (legs, feet, knees)."
+    "Given the following video, describe the actions in the video "
+    "and identify the foul contact location. Specify whether the "
+    "foul contact region is located in the upper body or lower body."
 )
 
 # Some Qwen2.5-VL finetunes ship with a broken processor config.
@@ -52,15 +51,15 @@ class _Timeout:
         return False
 
 
-def _sample_frames(
+def _sample_video_frames(
     frames: np.ndarray,
     start_frame: int,
     end_frame: int,
     num_frames: int,
-) -> List[Image.Image]:
+) -> np.ndarray:
     total = frames.shape[0]
     if total <= 0:
-        return []
+        return np.empty((0,), dtype=frames.dtype)
 
     start = min(max(start_frame, 0), total - 1)
     end = min(max(end_frame, 0), total - 1)
@@ -73,8 +72,9 @@ def _sample_frames(
     idx = np.clip(idx, 0, total - 1)
 
     sampled = frames[idx]
-    images = [Image.fromarray(frame.astype(np.uint8)) for frame in sampled]
-    return images
+    if sampled.dtype != np.uint8:
+        sampled = sampled.astype(np.uint8)
+    return sampled
 
 
 def _load_qwen(model_name: str, quantization: str):
@@ -156,7 +156,8 @@ def _load_clip(model_name: str, device: str):
 def _generate_description(
     model,
     processor,
-    frames: List[Image.Image],
+    frames: np.ndarray,
+    fps: float,
     prompt: str,
     max_new_tokens: int,
     timeout_s: Optional[int],
@@ -168,10 +169,10 @@ def _generate_description(
             "qwen_vl_utils is required for Qwen2.5-VL vision inputs."
         ) from exc
 
-    content = [{"type": "text", "text": prompt}]
-    for frame in frames:
-        content.append({"type": "image", "image": frame})
-
+    content = [
+        {"type": "video", "video": frames, "fps": fps},
+        {"type": "text", "text": prompt},
+    ]
     messages = [{"role": "user", "content": content}]
     text_input = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
@@ -275,6 +276,8 @@ def main():
     parser.add_argument("--num_frames", default=8, type=int)
     parser.add_argument("--max_new_tokens", default=256, type=int)
     parser.add_argument("--timeout_s", default=30, type=int)
+    parser.add_argument("--fps", default=25.0, type=float)
+    parser.add_argument("--max_actions", default=None, type=int)
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -296,6 +299,9 @@ def main():
     descriptions: Dict[str, str] = {}
     failures: List[str] = []
 
+    processed_count = 0
+    stop_early = False
+
     with h5py.File(args.output_hdf5, "w") as out_h5:
         for split in ("Train", "Valid", "Test"):
             h5_path = os.path.join(args.hdf5_root, f"{split}.hdf5")
@@ -308,24 +314,28 @@ def main():
                 logging.info(f"{split}: {len(pairs)} actions")
 
                 for action_id, key in tqdm(pairs, desc=f"{split}"):
+                    if args.max_actions is not None and processed_count >= args.max_actions:
+                        stop_early = True
+                        break
                     if action_id in out_h5:
                         continue
 
                     try:
                         frames = np.asarray(h5[key])
-                        images = _sample_frames(
+                        sampled_frames = _sample_video_frames(
                             frames,
                             start_frame=args.start_frame,
                             end_frame=args.end_frame,
                             num_frames=args.num_frames,
                         )
-                        if not images:
+                        if sampled_frames.size == 0:
                             raise ValueError("empty frame sample")
 
                         text = _generate_description(
                             qwen,
                             processor,
-                            images,
+                            sampled_frames,
+                            args.fps,
                             PROMPT,
                             max_new_tokens=args.max_new_tokens,
                             timeout_s=args.timeout_s,
@@ -347,6 +357,10 @@ def main():
                         descriptions[action_id] = ""
 
                     out_h5.create_dataset(action_id, data=emb, dtype="float32")
+                    processed_count += 1
+
+                if stop_early:
+                    break
 
     payload = {
         "prompt": PROMPT,
