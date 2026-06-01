@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from mvaggregate import MVAggregate
 from mffm import MultiModalFeatureFusionModule
+from task_decoder import TaskQueryDecoder
 from torchvision.models.video import (
     r3d_18,
     R3D_18_Weights,
@@ -199,6 +200,7 @@ class MVNetwork(torch.nn.Module):
         use_text_bridge: bool = False,
         clip_embeddings_path: str = "",
         use_mffm: bool = False,
+        use_decoder: bool = False,
     ):
         super().__init__()
         self.net_name = net_name
@@ -294,7 +296,68 @@ class MVNetwork(torch.nn.Module):
                 raise ValueError("MFFM requires 768-dim features")
             self.mffm = MultiModalFeatureFusionModule(dim=768, num_layers=2)
 
+        self.decoder = None
+        if use_decoder:
+            if self.feat_dim % 8 == 0:
+                num_heads = 8
+            elif self.feat_dim % 4 == 0:
+                num_heads = 4
+            else:
+                num_heads = 1
+            self.decoder = TaskQueryDecoder(
+                dim=self.feat_dim,
+                num_layers=2,
+                num_heads=num_heads,
+                dropout=0.1,
+            )
+
     def forward(self, mvimages: torch.Tensor, text_features: torch.Tensor = None):
+        if self.decoder is not None:
+            agg = self.mvnetwork.aggregation_model
+            if not hasattr(agg, "get_tokens"):
+                raise ValueError(
+                    "Decoder requires aggregation_model.get_tokens; use pooling_type 'transformer'."
+                )
+
+            token_seq, token_mask, attention = agg.get_tokens(mvimages)
+            if self.mffm is not None and text_features is not None:
+                text = text_features.unsqueeze(1)
+                token_seq = self.mffm(
+                    token_seq, text, visual_pad_mask=token_mask
+                )
+
+            q_act, q_sev = self.decoder(token_seq, token_mask)
+
+            pred_action = self.mvnetwork.fc_action(q_act)
+            if self.mvnetwork.cascade_severity:
+                sev_in = torch.cat([q_sev, pred_action.detach()], dim=-1)
+            else:
+                sev_in = q_sev
+            pred_ordinal_severity = self.mvnetwork.fc_ordinal_severity(sev_in)
+
+            pred_contact = self.mvnetwork.fc_contact(q_act).squeeze(-1)
+            pred_bodypart = self.mvnetwork.fc_bodypart(q_act).squeeze(-1)
+            pred_try_to_play = self.mvnetwork.fc_try_to_play(q_act).squeeze(-1)
+            pred_handball = self.mvnetwork.fc_handball(q_act).squeeze(-1)
+
+            clip_proj = None
+            if self.mvnetwork.clip_proj is not None:
+                clip_proj = F.normalize(self.mvnetwork.clip_proj(q_act), dim=-1)
+
+            outputs = (
+                pred_ordinal_severity,
+                pred_action,
+                pred_contact,
+                pred_bodypart,
+                pred_try_to_play,
+                pred_handball,
+                attention,
+            )
+
+            if clip_proj is None:
+                return outputs
+            return outputs + (clip_proj,)
+
         if self.mffm is None or text_features is None:
             return self.mvnetwork(mvimages)
 

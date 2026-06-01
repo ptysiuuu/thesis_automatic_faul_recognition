@@ -218,6 +218,7 @@ def main(args):
     clip_weight = args.clip_weight
     clip_embeddings_path = args.clip_embeddings_path
     use_mffm = args.use_mffm
+    use_decoder = args.use_decoder
     descriptions_path = args.descriptions_path
 
     number_of_frames = int(
@@ -461,6 +462,10 @@ def main(args):
 
     # --- model ---
     if fusion_mode:
+        if use_mffm or use_decoder:
+            logging.warning(
+                "--use_mffm/--use_decoder are ignored in --fusion_mode"
+            )
         model = EarlyFusionNetwork(
             num_views=num_views,
             T_per_view=number_of_frames,
@@ -480,14 +485,20 @@ def main(args):
             use_text_bridge=use_text_bridge,
             clip_embeddings_path=clip_embeddings_path,
             use_mffm=use_mffm,
+            use_decoder=use_decoder,
         ).cuda()
         backbone_prefix = "aggregation_model.model."
         logging.info(
             f"Multi-view mode: MVNetwork (backbone={pre_model}, agr={pooling_type}, "
             f"topology={graph_topology if pooling_type == 'gat' else 'n/a'}, "
             f"cascade_severity={cascade_severity}, text_bridge={use_text_bridge}, "
-            f"mffm={use_mffm})"
+            f"mffm={use_mffm}, decoder={use_decoder})"
         )
+
+        if use_decoder and pooling_type != "transformer":
+            logging.warning(
+                "--use_decoder expects pooling_type='transformer' for token access"
+            )
 
     if use_mffm and not descriptions_path:
         logging.warning("--use_mffm enabled without --descriptions_path")
@@ -828,6 +839,12 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Enable MFFM fusion of visual features with text embeddings",
+    )
+    parser.add_argument(
+        "--use_decoder",
+        action="store_true",
+        default=False,
+        help="Enable task-specific query decoder between tokens and heads",
     )
     parser.add_argument(
         "--descriptions_path",
