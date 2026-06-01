@@ -18,8 +18,6 @@ PROMPT = (
     "foul contact region is located in the upper body or lower body."
 )
 
-# Some Qwen2.5-VL finetunes ship with a broken processor config.
-# Fall back to the base processor in those cases.
 PROCESSOR_FALLBACK = {
     "Video-R1/Video-R1-7B",
     "Video-R1/Qwen2.5-VL-7B-COT-SFT",
@@ -51,32 +49,6 @@ class _Timeout:
         return False
 
 
-def _sample_video_frames(
-    frames: np.ndarray,
-    start_frame: int,
-    end_frame: int,
-    num_frames: int,
-) -> np.ndarray:
-    total = frames.shape[0]
-    if total <= 0:
-        return np.empty((0,), dtype=frames.dtype)
-
-    start = min(max(start_frame, 0), total - 1)
-    end = min(max(end_frame, 0), total - 1)
-    if end <= start:
-        start = 0
-        end = total - 1
-
-    idx = np.linspace(start, end, num=num_frames)
-    idx = np.round(idx).astype(int)
-    idx = np.clip(idx, 0, total - 1)
-
-    sampled = frames[idx]
-    if sampled.dtype != np.uint8:
-        sampled = sampled.astype(np.uint8)
-    return sampled
-
-
 def _load_qwen(model_name: str, quantization: str):
     from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 
@@ -88,7 +60,6 @@ def _load_qwen(model_name: str, quantization: str):
 
     if quantization in ("4bit", "8bit"):
         from transformers import BitsAndBytesConfig
-
         try:
             import bitsandbytes  # noqa: F401
         except ImportError as exc:
@@ -156,8 +127,8 @@ def _load_clip(model_name: str, device: str):
 def _generate_description(
     model,
     processor,
-    frames: np.ndarray,
-    fps: float,
+    mp4_path: str,
+    num_frames: int,
     prompt: str,
     max_new_tokens: int,
     timeout_s: Optional[int],
@@ -170,7 +141,7 @@ def _generate_description(
         ) from exc
 
     content = [
-        {"type": "video", "video": frames, "fps": fps},
+        {"type": "video", "video": mp4_path, "nframes": num_frames},
         {"type": "text", "text": prompt},
     ]
     messages = [{"role": "user", "content": content}]
@@ -205,7 +176,7 @@ def _generate_description(
                 top_p=None,
             )
 
-    generated = out[:, inputs["input_ids"].shape[1] :]
+    generated = out[:, inputs["input_ids"].shape[1]:]
     text = processor.batch_decode(generated, skip_special_tokens=True)[0]
     return text.strip()
 
@@ -224,36 +195,42 @@ def _encode_text(
     return text_features[0].detach().cpu().numpy().astype(np.float32)
 
 
-def _iter_actions(h5: h5py.File) -> List[Tuple[str, str]]:
+def _iter_actions(data_root: str) -> List[Tuple[str, str]]:
+    """Return (action_id, mp4_path) for all actions across Train/Valid/Test."""
     pairs = []
-    for action_id in h5.keys():
-        key = f"{action_id}/clip_0"
-        if key in h5:
-            pairs.append((action_id, key))
+    for split in ("Train", "Valid", "Test"):
+        split_dir = os.path.join(data_root, split)
+        if not os.path.exists(split_dir):
+            logging.warning(f"Split directory not found: {split_dir}")
+            continue
+        for action_id in sorted(os.listdir(split_dir)):
+            clip_path = os.path.join(split_dir, action_id, "clip_0.mp4")
+            if os.path.exists(clip_path):
+                pairs.append((action_id, clip_path))
     return pairs
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract Qwen descriptions and CLIP text embeddings"
+        description="Extract Qwen descriptions and CLIP text embeddings from mp4 clips"
     )
     parser.add_argument(
-        "--hdf5_root",
+        "--data_root",
         required=True,
         type=str,
-        help="Root folder containing Train/Valid/Test HDF5 files",
+        help="Root folder containing Train/Valid/Test subdirectories with mp4 clips",
     )
     parser.add_argument(
         "--output_hdf5",
         required=True,
         type=str,
-        help="Output HDF5 path for text embeddings",
+        help="Output HDF5 path for CLIP text embeddings",
     )
     parser.add_argument(
         "--output_json",
         required=True,
         type=str,
-        help="Output JSON path for raw descriptions",
+        help="Output JSON path for raw Qwen descriptions",
     )
     parser.add_argument(
         "--qwen_model",
@@ -267,17 +244,24 @@ def main():
     )
     parser.add_argument(
         "--quantization",
-        default="4bit",
+        default="none",
         choices=["none", "4bit", "8bit"],
         type=str,
     )
-    parser.add_argument("--start_frame", default=58, type=int)
-    parser.add_argument("--end_frame", default=92, type=int)
-    parser.add_argument("--num_frames", default=8, type=int)
+    parser.add_argument(
+        "--num_frames",
+        default=8,
+        type=int,
+        help="Number of frames to sample from each clip for Qwen",
+    )
     parser.add_argument("--max_new_tokens", default=256, type=int)
-    parser.add_argument("--timeout_s", default=30, type=int)
-    parser.add_argument("--fps", default=25.0, type=float)
-    parser.add_argument("--max_actions", default=None, type=int)
+    parser.add_argument("--timeout_s", default=60, type=int)
+    parser.add_argument(
+        "--max_actions",
+        default=None,
+        type=int,
+        help="Stop after this many actions (for testing)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -289,77 +273,54 @@ def main():
     qwen, processor = _load_qwen(args.qwen_model, args.quantization)
     clip_model, clip_tokenizer = _load_clip(args.clip_model, device="cuda")
 
-    out_h5_dir = os.path.dirname(args.output_hdf5)
-    out_json_dir = os.path.dirname(args.output_json)
-    if out_h5_dir:
-        os.makedirs(out_h5_dir, exist_ok=True)
-    if out_json_dir:
-        os.makedirs(out_json_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(args.output_hdf5) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(args.output_json) or ".", exist_ok=True)
+
+    pairs = _iter_actions(args.data_root)
+    logging.info(f"Total actions found: {len(pairs)}")
 
     descriptions: Dict[str, str] = {}
     failures: List[str] = []
-
     processed_count = 0
-    stop_early = False
+
     with h5py.File(args.output_hdf5, "a") as out_h5:
-        for split in ("Train", "Valid", "Test"):
-            h5_path = os.path.join(args.hdf5_root, f"{split}.hdf5")
-            if not os.path.exists(h5_path):
-                logging.warning(f"Missing HDF5 split: {h5_path}")
+        for action_id, mp4_path in tqdm(pairs, desc="Extracting"):
+            if args.max_actions is not None and processed_count >= args.max_actions:
+                break
+
+            if action_id in out_h5:
+                processed_count += 1
                 continue
 
-            with h5py.File(h5_path, "r") as h5:
-                pairs = _iter_actions(h5)
-                logging.info(f"{split}: {len(pairs)} actions")
+            try:
+                text = _generate_description(
+                    qwen,
+                    processor,
+                    mp4_path,
+                    args.num_frames,
+                    PROMPT,
+                    max_new_tokens=args.max_new_tokens,
+                    timeout_s=args.timeout_s,
+                )
+                if not text:
+                    raise ValueError("empty description")
 
-                for action_id, key in tqdm(pairs, desc=f"{split}"):
-                    if args.max_actions is not None and processed_count >= args.max_actions:
-                        stop_early = True
-                        break
-                    if action_id in out_h5:
-                        continue
+                emb = _encode_text(
+                    clip_model,
+                    clip_tokenizer,
+                    text,
+                    device="cuda",
+                )
+                descriptions[action_id] = text
 
-                    try:
-                        frames = np.asarray(h5[key])
-                        sampled_frames = _sample_video_frames(
-                            frames,
-                            start_frame=args.start_frame,
-                            end_frame=args.end_frame,
-                            num_frames=args.num_frames,
-                        )
-                        if sampled_frames.size == 0:
-                            raise ValueError("empty frame sample")
+            except Exception as exc:
+                logging.warning(f"{action_id}: {exc}")
+                failures.append(action_id)
+                emb = np.zeros((768,), dtype=np.float32)
+                descriptions[action_id] = ""
 
-                        text = _generate_description(
-                            qwen,
-                            processor,
-                            sampled_frames,
-                            args.fps,
-                            PROMPT,
-                            max_new_tokens=args.max_new_tokens,
-                            timeout_s=args.timeout_s,
-                        )
-                        if not text:
-                            raise ValueError("empty description")
-
-                        emb = _encode_text(
-                            clip_model,
-                            clip_tokenizer,
-                            text,
-                            device="cuda",
-                        )
-                        descriptions[action_id] = text
-                    except Exception as exc:
-                        logging.warning(f"{action_id}: {exc}")
-                        failures.append(action_id)
-                        emb = np.zeros((768,), dtype=np.float32)
-                        descriptions[action_id] = ""
-
-                    out_h5.create_dataset(action_id, data=emb, dtype="float32")
-                    processed_count += 1
-
-                if stop_early:
-                    break
+            out_h5.create_dataset(action_id, data=emb, dtype="float32")
+            processed_count += 1
 
     payload = {
         "prompt": PROMPT,
@@ -370,7 +331,7 @@ def main():
         json.dump(payload, f, indent=2)
 
     logging.info(
-        f"Done. Saved {len(descriptions)} embeddings; failures: {len(failures)}"
+        f"Done. Saved {len(descriptions)} embeddings; {len(failures)} failures."
     )
 
 
