@@ -27,7 +27,7 @@ python extract_descriptions.py \
     --output_json "$OUTPUT_JSON" \
     --quantization none \
     --num_frames 8 \
-    --fps 25.0 \
+    --fps 12.0 \
     --max_actions 5 \
-    --max_new_tokens 256 \
+    --max_new_tokens 512 \
     --timeout_s 30
