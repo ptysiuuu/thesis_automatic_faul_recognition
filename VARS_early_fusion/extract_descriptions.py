@@ -13,9 +13,9 @@ from tqdm import tqdm
 
 
 PROMPT = (
-    "Given the following video, describe the actions in the video "
-    "and identify the foul contact location. Specify whether the "
-    "foul contact region is located in the upper body or lower body."
+    "Given the following video clip of a soccer foul, briefly describe "
+    "the physical contact between players and state whether the foul "
+    "contact region is upper body or lower body. Be concise."
 )
 
 PROCESSOR_FALLBACK = {
@@ -187,7 +187,13 @@ def _encode_text(
     text: str,
     device: str,
 ) -> np.ndarray:
-    inputs = tokenizer(text, padding=True, return_tensors="pt")
+    inputs = tokenizer(
+    text,
+    padding=True,
+    truncation=True,
+    max_length=77,
+    return_tensors="pt",
+	)
     inputs = {k: v.to(device) for k, v in inputs.items()}
     with torch.no_grad():
         text_features = clip_model.get_text_features(**inputs)

@@ -26,5 +26,5 @@ python extract_descriptions.py \
     --output_hdf5 "$OUTPUT_H5" \
     --output_json "$OUTPUT_JSON" \
     --quantization none \
-    --max_new_tokens 256 \
+    --max_new_tokens 60
     --timeout_s 30

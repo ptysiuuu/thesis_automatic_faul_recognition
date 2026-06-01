@@ -26,6 +26,7 @@ python extract_descriptions.py \
     --output_hdf5 features/text_embeddings_sanity.h5 \
     --output_json features/text_descriptions_sanity.json \
     --quantization none \
+	--max_new_tokens 60
     --num_frames 8 \
     --max_actions 5 \
     --timeout_s 60
