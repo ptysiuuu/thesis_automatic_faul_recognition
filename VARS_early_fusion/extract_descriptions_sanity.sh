@@ -28,5 +28,5 @@ python extract_descriptions.py \
     --quantization none \
 	--max_new_tokens 60 \
     --num_frames 16 \
-    --max_actions 5 \
+    --max_actions 10 \
     --timeout_s 60
