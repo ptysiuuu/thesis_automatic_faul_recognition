@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=VARS_extract_desc
+#SBATCH --job-name=QWEN_extract_descriptions
 #SBATCH --partition=plgrid-gpu-a100
 #SBATCH --account=plggolemml26-gpu-a100
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
-#SBATCH --time=04:00:00
+#SBATCH --time=14:00:00
 #SBATCH --output=extract_descriptions_%j.out
 
 export HF_HOME=/net/tscratch/people/plgaszos/.cache/huggingface

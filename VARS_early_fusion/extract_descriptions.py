@@ -301,8 +301,7 @@ def main():
 
     processed_count = 0
     stop_early = False
-
-    with h5py.File(args.output_hdf5, "w") as out_h5:
+    with h5py.File(args.output_hdf5, "a") as out_h5:
         for split in ("Train", "Valid", "Test"):
             h5_path = os.path.join(args.hdf5_root, f"{split}.hdf5")
             if not os.path.exists(h5_path):
