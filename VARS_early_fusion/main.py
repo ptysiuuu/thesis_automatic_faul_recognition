@@ -33,6 +33,7 @@ _TORCHVISION_MODELS = {
     "mvit_v2_s",
     "mvit_v1_b",
     "tadaformer_b16",
+    "aim_vitb16",
     "vjepa21_vitb",
     "intern_video2_dist_b",
 }
@@ -299,6 +300,7 @@ def main(args):
         "mvit_v1_b": MViT_V1_B_Weights.KINETICS400_V1.transforms(),
         **{k: _videomae_transform for k in HF_VIDEOMAE_REGISTRY},
         "tadaformer_b16": TAdaFormerTransform(size=224),
+        "aim_vitb16": TAdaFormerTransform(size=224),
         **{k: HieraTransform(size=224) for k in HIERA_MODELS},
         "vjepa21_vitb": VJEPA21Transform(size=384),
         "intern_video2_dist_b": InternVideo2Transform(size=224),
@@ -558,6 +560,7 @@ def main(args):
     # --- training setup ---
     # Freeze backbone params initially; keep VJEPA adapter trainable.
     is_vjepa = (not fusion_mode) and pre_model == "vjepa21_vitb"
+    is_aim = (not fusion_mode) and pre_model == "aim_vitb16"
     vjepa_backbone = None
     if is_vjepa:
         for module in model.modules():
@@ -565,9 +568,10 @@ def main(args):
                 vjepa_backbone = module
                 break
 
-    for name, param in model.named_parameters():
-        if backbone_prefix in name and "jepa_adapter" not in name:
-            param.requires_grad = False
+    if not is_aim:
+        for name, param in model.named_parameters():
+            if backbone_prefix in name and "jepa_adapter" not in name:
+                param.requires_grad = False
 
     adapter_params = [
         p

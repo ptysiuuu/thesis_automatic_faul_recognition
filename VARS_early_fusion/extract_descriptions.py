@@ -1,8 +1,10 @@
 import argparse
+import base64
 import json
 import logging
 import os
 import signal
+from io import BytesIO
 from typing import Dict, List, Optional, Tuple
 
 import h5py
@@ -10,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+from torchvision.io.video import read_video
 
 
 PROMPT = (
@@ -114,6 +117,27 @@ def _load_qwen(model_name: str, quantization: str):
     return model, processor
 
 
+def _load_qwen_api():
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise ImportError(
+            "openai is required for Qwen API calls. Install it with `pip install openai`."
+        ) from exc
+
+    api_key = os.getenv("DASHSCOPE_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "DASHSCOPE_API_KEY is not set. Export it before using --use_api."
+        )
+
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://ws-ltrh4g9yaar5vco0.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+    )
+    return client
+
+
 def _load_clip(model_name: str, device: str):
     from transformers import CLIPModel, CLIPTokenizer
 
@@ -181,6 +205,78 @@ def _generate_description(
     return text.strip()
 
 
+def _frames_to_base64(frames: np.ndarray) -> list:
+    """Convert [T, H, W, C] uint8 array to list of base64 JPEG data URIs."""
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise ImportError(
+            "Pillow is required for API frame encoding. Install it with `pip install pillow`."
+        ) from exc
+
+    result = []
+    for i in range(frames.shape[0]):
+        img = Image.fromarray(frames[i])
+        img = img.resize((512, 512))
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        result.append(f"data:image/jpeg;base64,{b64}")
+    return result
+
+
+def _generate_description_api(
+    client,
+    frames: np.ndarray,
+    prompt: str,
+    max_tokens: int = 256,
+    model_name: str = "qwen3-vl-235b-a22b-thinking",
+) -> str:
+    data_uris = _frames_to_base64(frames)
+
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "video", "video": data_uris},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ],
+        max_tokens=max_tokens,
+    )
+
+    text = response.choices[0].message.content
+    # Strip the thinking block from Qwen thinking models if present.
+    import re
+
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    return text
+
+
+def _sample_frames(mp4_path: str, num_frames: int) -> np.ndarray:
+    video, _, _ = read_video(mp4_path, pts_unit="sec", output_format="THWC")
+    if video.shape[0] == 0:
+        raise ValueError("empty video")
+    if num_frames <= 0:
+        raise ValueError("num_frames must be > 0")
+
+    total = video.shape[0]
+    if total == num_frames:
+        return video.numpy()
+
+    if total < num_frames:
+        pad = video[-1:].repeat(num_frames - total, 1, 1, 1)
+        video = torch.cat([video, pad], dim=0)
+        return video.numpy()
+
+    indices = np.linspace(0, total - 1, num_frames)
+    indices = np.round(indices).astype(int)
+    return video[indices].numpy()
+
+
 def _encode_text(
     clip_model,
     tokenizer,
@@ -244,6 +340,17 @@ def main():
         type=str,
     )
     parser.add_argument(
+        "--use_api",
+        action="store_true",
+        help="Use Qwen API instead of local model weights",
+    )
+    parser.add_argument(
+        "--api_model",
+        default="qwen3-vl-235b-a22b-thinking",
+        type=str,
+        help="Qwen API model name",
+    )
+    parser.add_argument(
         "--clip_model",
         default="openai/clip-vit-large-patch14",
         type=str,
@@ -275,21 +382,35 @@ def main():
         format="%(asctime)s [%(levelname)-5.5s] %(message)s",
     )
 
+    data_root = os.path.abspath(os.path.expanduser(os.path.expandvars(args.data_root)))
+    output_hdf5 = os.path.abspath(
+        os.path.expanduser(os.path.expandvars(args.output_hdf5))
+    )
+    output_json = os.path.abspath(
+        os.path.expanduser(os.path.expandvars(args.output_json))
+    )
+
     logging.info("Loading Qwen and CLIP...")
-    qwen, processor = _load_qwen(args.qwen_model, args.quantization)
+    qwen = None
+    processor = None
+    client = None
+    if args.use_api:
+        client = _load_qwen_api()
+    else:
+        qwen, processor = _load_qwen(args.qwen_model, args.quantization)
     clip_model, clip_tokenizer = _load_clip(args.clip_model, device="cuda")
 
-    os.makedirs(os.path.dirname(args.output_hdf5) or ".", exist_ok=True)
-    os.makedirs(os.path.dirname(args.output_json) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(output_hdf5) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(output_json) or ".", exist_ok=True)
 
-    pairs = _iter_actions(args.data_root)
+    pairs = _iter_actions(data_root)
     logging.info(f"Total actions found: {len(pairs)}")
 
     descriptions: Dict[str, str] = {}
     failures: List[str] = []
     processed_count = 0
 
-    with h5py.File(args.output_hdf5, "a") as out_h5:
+    with h5py.File(output_hdf5, "a") as out_h5:
         for action_id, mp4_path in tqdm(pairs, desc="Extracting"):
             if args.max_actions is not None and processed_count >= args.max_actions:
                 break
@@ -299,15 +420,25 @@ def main():
                 continue
 
             try:
-                text = _generate_description(
-                    qwen,
-                    processor,
-                    mp4_path,
-                    args.num_frames,
-                    PROMPT,
-                    max_new_tokens=args.max_new_tokens,
-                    timeout_s=args.timeout_s,
-                )
+                if args.use_api:
+                    sampled_frames = _sample_frames(mp4_path, args.num_frames)
+                    text = _generate_description_api(
+                        client,
+                        sampled_frames,
+                        PROMPT,
+                        max_tokens=args.max_new_tokens,
+                        model_name=args.api_model,
+                    )
+                else:
+                    text = _generate_description(
+                        qwen,
+                        processor,
+                        mp4_path,
+                        args.num_frames,
+                        PROMPT,
+                        max_new_tokens=args.max_new_tokens,
+                        timeout_s=args.timeout_s,
+                    )
                 if not text:
                     raise ValueError("empty description")
 
@@ -333,7 +464,7 @@ def main():
         "descriptions": descriptions,
         "failures": failures,
     }
-    with open(args.output_json, "w") as f:
+    with open(output_json, "w") as f:
         json.dump(payload, f, indent=2)
 
     logging.info(

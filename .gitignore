@@ -40,3 +40,4 @@ ablation_results_v2/output/summary.json
 ablation_results_v2/output/results.json
 CLAUDE.md
 graphify-out
+VARS_early_fusion/features/text_descriptions.json

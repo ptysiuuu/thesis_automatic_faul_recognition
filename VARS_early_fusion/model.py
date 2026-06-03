@@ -256,6 +256,15 @@ class MVNetwork(torch.nn.Module):
             )
             self.feat_dim = 768
 
+        elif net_name == "aim_vitb16":
+            from aim_backbone import AIMBackbone
+
+            network = AIMBackbone(
+                checkpoint_path="/net/tscratch/people/plgaszos/sn-mvfoul/checkpoints/aim_vitb16_k400_16f.pth"
+            )
+            self.feat_dim = 768
+            self._tokens_per_view = 16
+
         elif net_name == "vjepa21_vitb":
             from vjepa21_backbone import VJEPA21Backbone
 
