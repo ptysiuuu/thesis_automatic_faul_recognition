@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=VARS_aim_decoder
-#SBATCH --partition=plgrid-gpu-a100
+#SBATCH --partition=plgrid-now
 #SBATCH --account=plggolemml26-gpu-a100
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=128G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
 #SBATCH --time=00:20:00
 #SBATCH --output=aim_decoder_%j.out
 
