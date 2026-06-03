@@ -260,7 +260,7 @@ class MVNetwork(torch.nn.Module):
             from aim_backbone import AIMBackbone
 
             network = AIMBackbone(
-                checkpoint_path="/net/tscratch/people/plgaszos/sn-mvfoul/checkpoints/aim_vitb16_k400_16f.pth"
+                checkpoint_path="/net/tscratch/people/plgaszos/sn-mvfoul/checkpoints/vit_b_clip_16frame_k400.pth"
             )
             self.feat_dim = 768
             self._tokens_per_view = 16
