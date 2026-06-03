@@ -6,14 +6,14 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=12:00:00
+#SBATCH --time=08:00:00
 #SBATCH --output=tada_decoder_v2_%j.out
 
 export HF_HOME=/net/tscratch/people/plgaszos/.cache/huggingface
 export TRANSFORMERS_CACHE=$HF_HOME
 
 DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
-WEIGHTS="/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/16_model.pth.tar"
+WEIGHTS="/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/models/VARS_tadaformer_decoder_v2/5/tadaformer_b16/5e-05/_B2_F2_G0.1_Step3/18_model.pth.tar"
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate vars
@@ -28,7 +28,7 @@ python main.py \
     --accum_steps           4 \
     --LR                    5e-5 \
     --weight_decay          1e-3 \
-    --max_epochs            20 \
+    --max_epochs            40 \
     --patience              7 \
     --num_views             5 \
     --fps                   12 \
