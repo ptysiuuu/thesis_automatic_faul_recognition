@@ -16,7 +16,7 @@ export DASHSCOPE_API_KEY=your_key_here
 DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
-conda activate vars
+conda activate /net/tscratch/people/plgaszos/conda_envs/vlm32b
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion
 
 python main.py \
