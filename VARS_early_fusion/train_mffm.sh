@@ -14,7 +14,7 @@ export TRANSFORMERS_CACHE=$HF_HOME
 
 DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
 DESC_PATH="/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/features/text_embeddings.h5"
-WEIGHTS="/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/models/VARS_tadaformer_b16_newparams/5/tadaformer_b16/5e-05/_B2_F16_G0.1_Step3/12_model.pth.tar"
+WEIGHTS="/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/models/VARS_tadaformer_b16_newparams/5/tadaformer_b16/5e-05/_B2_F2_G0.1_Step3/16_model.pth.tar"
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate /net/tscratch/people/plgaszos/conda_envs/vlm32b
