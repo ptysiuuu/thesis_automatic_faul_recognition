@@ -283,10 +283,8 @@ class MultiViewDataset(Dataset):
             return self.__getitem__(random.randint(0, self.length - 1))
 
         # Random view dropout during training (view-level regularisation)
-        if self.split == "Train" and len(processed_views) > 1:
-            surviving = [v for v in processed_views if random.random() > 0.2]
-            if len(surviving) > 0:
-                processed_views = surviving
+        if self.split == "Train" and len(processed_views) > 2:
+            processed_views = random.sample(processed_views, 2)
 
         videos = torch.stack(processed_views, dim=0)
 
