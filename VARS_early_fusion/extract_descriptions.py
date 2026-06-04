@@ -308,7 +308,8 @@ def _iter_actions(data_root: str) -> List[Tuple[str, str]]:
         for action_id in sorted(os.listdir(split_dir)):
             clip_path = os.path.join(split_dir, action_id, "clip_0.mp4")
             if os.path.exists(clip_path):
-                pairs.append((action_id, clip_path))
+                key = action_id if split == "Train" else f"{split}_{action_id}"
+                pairs.append((key, clip_path))
     return pairs
 
 

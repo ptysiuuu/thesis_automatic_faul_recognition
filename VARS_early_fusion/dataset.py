@@ -321,7 +321,8 @@ class MultiViewDataset(Dataset):
         text_feature = None
         if self.text_embeddings is not None:
             action_id = available_clips[0].split(os.sep)[-2]
-            emb = self.text_embeddings.get(action_id)
+            key = action_id if self.split == "Train" else f"{self.split}_{action_id}"
+            emb = self.text_embeddings.get(key)
             if emb is None:
                 if action_id not in self._missing_text_embeddings:
                     logging.warning(
