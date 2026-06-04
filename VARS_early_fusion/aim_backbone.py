@@ -34,6 +34,11 @@ class AIMBackbone(nn.Module):
                 if key in checkpoint:
                     state_dict = checkpoint[key]
                     break
+            state_dict = {
+        		k[len("backbone."):] if k.startswith("backbone.") else k: v
+        		for k, v in state_dict.items()
+    		}
+
             missing, unexpected = self._vit.load_state_dict(state_dict, strict=False)
             if missing:
                 logger.info("AIM missing keys: %s", missing)

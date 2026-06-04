@@ -1,46 +1,51 @@
 #!/bin/bash
-#SBATCH --job-name=VARS_aim_decoder
+#SBATCH --job-name=aim_verify
 #SBATCH --partition=plgrid-now
 #SBATCH --account=plggolemml26-gpu-a100
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=00:20:00
-#SBATCH --output=aim_decoder_%j.out
-
-export HF_HOME=/net/tscratch/people/plgaszos/.cache/huggingface
-export TRANSFORMERS_CACHE=$HF_HOME
-export DASHSCOPE_API_KEY=your_key_here
-
-DATASET_PATH="/net/tscratch/people/plgaszos/SoccerNet_Data"
+#SBATCH --time=00:30:00
+#SBATCH --output=aim_verify_%j.out
 
 source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
-conda activate vars
+conda activate /net/tscratch/people/plgaszos/conda_envs/vlm32b
 cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion
 
-python main.py \
-    --path             "$DATASET_PATH" \
-    --pre_model        aim_vitb16 \
-    --pooling_type     transformer \
-    --use_decoder \
-    --batch_size       2 \
-    --accum_steps      4 \
-    --LR               5e-5 \
-    --weight_decay     1e-3 \
-    --max_epochs       2 \
-    --patience         10 \
-    --num_views        5 \
-    --fps              12 \
-    --start_frame      58 \
-    --end_frame        92 \
-    --data_aug         Yes \
-    --aug_preset       default \
-    --weighted_loss    Yes \
-    --balanced_sampler Yes \
-    --aux_weight       0.2 \
-    --ema_decay        0.999 \
-    --freeze_epoch     999 \
-    --model_name       VARS_aim_decoder \
-    --GPU              0 \
-    --max_num_worker   16
+python - <<'EOF'
+import torch
+from aim_backbone import AIMBackbone
+
+CKPT = "/net/tscratch/people/plgaszos/sn-mvfoul/checkpoints/vit_b_clip_16frame_k400.pth"
+
+print("=== Loading AIMBackbone ===")
+m = AIMBackbone(CKPT).cuda()
+
+trainable = sum(p.numel() for p in m.parameters() if p.requires_grad)
+frozen    = sum(p.numel() for p in m.parameters() if not p.requires_grad)
+print(f"Trainable : {trainable/1e6:.1f}M")
+print(f"Frozen    : {frozen/1e6:.1f}M")
+print(f"Expected  : ~11M trainable, ~85M frozen")
+
+# Check a known ViT weight is actually loaded (not random)
+vit_weight = m._vit.class_embedding
+print(f"\nclass_embedding norm: {vit_weight.norm().item():.4f}")
+print(f"Expected: non-trivial value (>>0). If ~0 or random: loading failed.")
+
+# Forward pass
+print("\n=== Forward pass ===")
+dummy = torch.randn(2, 3, 16, 224, 224).cuda()
+with torch.no_grad():
+    out = m(dummy)
+print(f"Output shape: {out.shape}  (expected [2, 16, 768])")
+
+# Check trainable param names (should be adapters only)
+print("\n=== Trainable param names (first 5) ===")
+trainable_names = [n for n, p in m.named_parameters() if p.requires_grad]
+for n in trainable_names[:5]:
+    print(" ", n)
+print(f"  ... ({len(trainable_names)} total trainable params)")
+
+print("\n=== DONE ===")
+EOF
