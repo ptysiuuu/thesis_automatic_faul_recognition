@@ -36,19 +36,24 @@ def ordinal_targets(labels_int, num_thresholds=3, device="cpu", smoothing=0.0):
     return targets.to(device)
 
 
-def ordinal_loss(logits, labels_int, pos_weight=None):
+def ordinal_loss(logits, targets_or_labels, pos_weight=None):
     """
     Cumulative BCE loss for ordinal regression.
     logits : (B, 3)
-    labels_int : (B,) integer 0-3
+    targets_or_labels : (B, 3) float tensor or (B,) long tensor
     """
     smoothing = 0.0 if pos_weight is not None else 0.1
-    targets = ordinal_targets(
-        labels_int,
-        num_thresholds=logits.shape[1],
-        device=logits.device,
-        smoothing=smoothing,
-    )
+    if targets_or_labels.ndim == 1:
+        targets = ordinal_targets(
+            targets_or_labels,
+            num_thresholds=logits.shape[1],
+            device=logits.device,
+            smoothing=smoothing,
+        )
+    else:
+        targets = targets_or_labels.to(logits.device)
+        if smoothing > 0:
+            targets = targets * (1 - smoothing) + smoothing * 0.5
     if pos_weight is not None:
         pos_weight = pos_weight.to(logits.device)
     return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight)
@@ -590,11 +595,11 @@ def _train_epoch(
                 out_act = out_act.unsqueeze(0)
 
             # --- losses ---
-            labels_int = targets_sev.argmax(dim=1)
+            labels_int = (targets_sev >= 1.0).sum(dim=1).long()
             pos_weight = None
             if isinstance(criterion, dict):
                 pos_weight = criterion.get("ordinal_pos_weight")
-            loss_sev = ordinal_loss(out_sev, labels_int, pos_weight=pos_weight)
+            loss_sev = ordinal_loss(out_sev, targets_sev, pos_weight=pos_weight)
             loss_act = criterion_action(out_act, targets_act)
 
             loss_aux = (

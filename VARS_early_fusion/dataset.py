@@ -158,7 +158,7 @@ class MultiViewDataset(Dataset):
 
     def get_severity_classes(self):
         """Return integer severity class per sample — used for balanced sampler."""
-        return [torch.argmax(l[0]).item() for l in self.labels_offence_severity]
+        return [int(l[0][0].item()) for l in self.labels_offence_severity]
 
     def get_balanced_sampler(self):
         """WeightedRandomSampler that equalises severity-class frequencies."""
@@ -332,7 +332,7 @@ class MultiViewDataset(Dataset):
 
         if self.split != "Chall":
             output = (
-                self.labels_offence_severity[index][0],  # (4,) one-hot
+                self.labels_offence_severity[index][0][1:],  # (3,) cumulative target vector
                 self.labels_action[index][0],  # (8,) one-hot
                 torch.tensor(self.labels_contact[index], dtype=torch.float),
                 torch.tensor(self.labels_bodypart[index], dtype=torch.float),

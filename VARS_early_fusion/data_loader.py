@@ -82,7 +82,7 @@ def label2vectormerge(folder_path, split, num_views):
             continue
 
         if (
-            (severity_class == "" or severity_class == "2.0" or severity_class == "4.0")
+            severity_class == ""
             and action_class != "Dive"
             and offence_class not in ("No offence", "No Offence")
         ):
@@ -92,18 +92,32 @@ def label2vectormerge(folder_path, split, num_views):
         if offence_class == "" or offence_class == "Between":
             offence_class = "Offence"
 
-        if severity_class == "" or severity_class == "2.0" or severity_class == "4.0":
+        if severity_class == "":
             severity_class = "1.0"
 
-        # --- determine severity index ---
+        # --- determine severity index and cumulative targets ---
         if offence_class in ("No Offence", "No offence"):
             off_index = 0
-        elif offence_class == "Offence" and severity_class == "1.0":
-            off_index = 1
-        elif offence_class == "Offence" and severity_class == "3.0":
-            off_index = 2
-        elif offence_class == "Offence" and severity_class == "5.0":
-            off_index = 3
+            cum_target = [0.0, 0.0, 0.0]
+        elif offence_class == "Offence":
+            if severity_class == "1.0":
+                off_index = 1
+                cum_target = [1.0, 0.0, 0.0]
+            elif severity_class == "2.0":
+                off_index = 1
+                cum_target = [1.0, 0.5, 0.0] if split == "Train" else [1.0, 0.0, 0.0]
+            elif severity_class == "3.0":
+                off_index = 2
+                cum_target = [1.0, 1.0, 0.0]
+            elif severity_class == "4.0":
+                off_index = 2
+                cum_target = [1.0, 1.0, 0.5] if split == "Train" else [1.0, 1.0, 0.0]
+            elif severity_class == "5.0":
+                off_index = 3
+                cum_target = [1.0, 1.0, 1.0]
+            else:
+                not_taking.append(actions)
+                continue
         else:
             not_taking.append(actions)
             continue
@@ -111,8 +125,7 @@ def label2vectormerge(folder_path, split, num_views):
         if num_views == 1:
             # One entry per clip
             for i in range(len(action_data["Clips"])):
-                sev_vec = torch.zeros(1, num_classes_offence_severity)
-                sev_vec[0][off_index] = 1
+                sev_vec = torch.tensor([[float(off_index), cum_target[0], cum_target[1], cum_target[2]]], dtype=torch.float)
                 labels_offence_severity.append(sev_vec)
                 distribution_offence_severity[0][off_index] += 1
 
@@ -127,8 +140,7 @@ def label2vectormerge(folder_path, split, num_views):
                 labels_try_to_play.append(try_to_play_val)
                 labels_handball.append(handball_val)
         else:
-            sev_vec = torch.zeros(1, num_classes_offence_severity)
-            sev_vec[0][off_index] = 1
+            sev_vec = torch.tensor([[float(off_index), cum_target[0], cum_target[1], cum_target[2]]], dtype=torch.float)
             labels_offence_severity.append(sev_vec)
             distribution_offence_severity[0][off_index] += 1
 
