@@ -3,7 +3,7 @@
 #SBATCH --partition=plgrid-gpu-a100
 #SBATCH --account=plggolemml26-gpu-a100
 #SBATCH --nodes=1
-#SBATCH --gpus=1
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=96G
 #SBATCH --time=14:00:00
@@ -11,7 +11,7 @@
 
 # Activate conda environment vars
 module load miniconda3
-source ~/miniconda3/etc/profile.d/conda.sh
+source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
 conda activate vars
 
 # Set working directory
@@ -44,4 +44,4 @@ python3 main.py \
   --freeze_epoch 999 \
   --model_name VARS_tada_2view_soft \
   --GPU 0 \
-  --max_num_worker 16 \
+  --max_num_worker 16
