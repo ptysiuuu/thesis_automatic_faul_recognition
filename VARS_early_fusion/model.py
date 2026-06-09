@@ -279,6 +279,12 @@ class MVNetwork(torch.nn.Module):
             self.feat_dim = 768
             # _tokens_per_view stays None → T_max=8 default in TransformerAggregate
 
+        elif net_name == "vjepa2_vitl_256":
+            from vjepa21_backbone import VJEPA2ViTLBackbone
+
+            network = VJEPA2ViTLBackbone(num_frames=16)
+            self.feat_dim = network.feat_dim          # 1024, not hardcoded
+            self._tokens_per_view = getattr(network, "tokens_per_view", None)  # 72
         else:
             print(
                 f"Warning: unknown backbone '{net_name}', falling back to r2plus1d_18"

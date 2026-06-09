@@ -195,7 +195,7 @@ class MultiViewDataset(Dataset):
 
         total = frames.shape[0]
 
-        if self.backbone_type in ("vjepa21_vitb", "intern_video2_dist_b"):
+        if self.backbone_type in ("vjepa21_vitb", "intern_video2_dist_b", "vjepa2_vitl_256"):
             final_frames = self._sample_vjepa_frames(frames)
         # Center-weighted sampling — focuses on contact moment
         elif self.center_weighted and total >= 8:
