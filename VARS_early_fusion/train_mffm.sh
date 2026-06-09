@@ -5,8 +5,8 @@
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=128G
-#SBATCH --time=16:00:00
+#SBATCH --mem=96G
+#SBATCH --time=08:00:00
 #SBATCH --output=tada_mffm_%j.out
 
 export HF_HOME=/net/tscratch/people/plgaszos/.cache/huggingface
@@ -30,7 +30,7 @@ python main.py \
     --accum_steps       4 \
     --LR                5e-5 \
     --weight_decay      1e-3 \
-    --max_epochs        20 \
+    --max_epochs        26 \
     --patience          7 \
     --num_views         5 \
     --fps               12 \
