@@ -279,7 +279,7 @@ class MVNetwork(torch.nn.Module):
             self.feat_dim = 768
             # _tokens_per_view stays None → T_max=8 default in TransformerAggregate
 
-        elif net_name == "vjepa2_vitl_256":
+        elif net_name == "vjepa2_vitl":
             from vjepa21_backbone import VJEPA2ViTLBackbone
 
             network = VJEPA2ViTLBackbone(num_frames=16)

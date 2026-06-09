@@ -305,7 +305,7 @@ def main(args):
         **{k: HieraTransform(size=224) for k in HIERA_MODELS},
         "vjepa21_vitb": VJEPA21Transform(size=384),
         "intern_video2_dist_b": InternVideo2Transform(size=224),
-        "vjepa2_vitl_256": VJEPA21Transform(size=256),
+        "vjepa2_vitl": VJEPA21Transform(size=384),
     }
     # Early fusion always uses MViT-v2-S weights transforms (backbone is hardcoded).
     transforms_model = (

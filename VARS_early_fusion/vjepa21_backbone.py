@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 VJEPA2_REPO = "/net/tscratch/people/plgaszos/sn-mvfoul/vjepa2"
 VJEPA21_CKPT = "/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/checkpoints/vjepa21_vitb_384.pt"
-VJEPA2_VITL_CKPT = "/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/checkpoints/vjepa2_vitl_256.pt"
+VJEPA2_VITL_CKPT = "/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/checkpoints/vjepa2_vitl_384.pt"
 
 
 class VJEPA21Backbone(nn.Module):
@@ -182,7 +182,7 @@ class VJEPA2ViTLBackbone(nn.Module):
         print(f"[VJEPA21] Loading ViT-B/16 architecture...")
         result = torch.hub.load(
             VJEPA2_REPO,
-            "vjepa2_1_vit_base_384",
+            "vjepa2_1_vit_large_384",
             source="local",
             trust_repo=True,
         )
@@ -207,7 +207,7 @@ class VJEPA2ViTLBackbone(nn.Module):
         self.num_frames = num_frames
         self.tubelet_size = 2
         self.patch_size = 16
-        self.img_size = 256
+        self.img_size = 384
         self.spatial_pool = (3, 3)
         self.tokens_per_view = 8 * self.spatial_pool[0] * self.spatial_pool[1]
         self.fc = nn.Sequential()
@@ -243,8 +243,8 @@ class VJEPA2ViTLBackbone(nn.Module):
         tokens = self.encoder(x)  # [B, 4608, 768] — confirmed by probe
 
         # T'=8, H'=W'=24 always (tubelet=2, patch=16, img=384)
-        tokens = tokens.view(B, 8, 16, 16, self.feat_dim)
-        tokens = tokens.permute(0, 1, 4, 2, 3).reshape(B * 8, self.feat_dim, 16, 16)
+        tokens = tokens.view(B, 8, 24, 24, self.feat_dim)
+        tokens = tokens.permute(0, 1, 4, 2, 3).reshape(B * 8, self.feat_dim, 24, 24)
         tokens = F.adaptive_max_pool2d(tokens, output_size=self.spatial_pool)
         tokens = tokens.view(
             B, 8, self.feat_dim, self.spatial_pool[0], self.spatial_pool[1]
