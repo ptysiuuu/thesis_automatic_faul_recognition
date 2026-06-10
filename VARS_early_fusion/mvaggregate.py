@@ -235,6 +235,31 @@ class TransformerAggregate(nn.Module):
         token_out = x[:, 1:]
         return token_out, pad_token_mask, temporal_weights
 
+    def get_tokens_masked(self, mvimages: torch.Tensor, v_mask: int):
+        """
+        Like get_tokens() but zeros view v_mask's tokens before the transformer.
+        The backbone still processes all views — only the attention path is blocked.
+        Used by JEPA: student must predict the masked view from cross-view context.
+        """
+        tokens, pad_token_mask, temporal_weights = self._build_tokens(mvimages)
+        B, V, *_ = mvimages.shape
+        N = tokens.shape[1]
+        T = N // V
+
+        tokens = tokens.clone()
+        pad_token_mask = pad_token_mask.clone()
+        start, end = v_mask * T, (v_mask + 1) * T
+        tokens[:, start:end] = 0.0
+        pad_token_mask[:, start:end] = True
+
+        cls_tokens = self.cls_token.expand(B, -1, -1)
+        x = torch.cat([cls_tokens, tokens], dim=1)
+        cls_mask = torch.zeros((B, 1), dtype=torch.bool, device=mvimages.device)
+        padding_mask = torch.cat([cls_mask, pad_token_mask], dim=1)
+
+        x = self.transformer(x, src_key_padding_mask=padding_mask)
+        return x[:, 1:], pad_token_mask, temporal_weights
+
     def _build_tokens(self, mvimages):
         B, V, *_ = mvimages.shape
 

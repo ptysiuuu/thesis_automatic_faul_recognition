@@ -201,6 +201,7 @@ class MVNetwork(torch.nn.Module):
         clip_embeddings_path: str = "",
         use_mffm: bool = False,
         use_decoder: bool = False,
+        use_jepa: bool = False,
     ):
         super().__init__()
         self.net_name = net_name
@@ -337,6 +338,111 @@ class MVNetwork(torch.nn.Module):
                 num_heads=num_heads,
                 dropout=0.1,
             )
+
+        # --- JEPA self-supervised objectives (teacher EMA + predictor) ---
+        self.teacher_backbone = None
+        self.jepa_predictor = None
+        self.jepa_target_queries = None
+
+        if use_jepa:
+            if agr_type != "transformer":
+                raise ValueError(
+                    "JEPA requires agr_type='transformer' for token-level access."
+                )
+            import copy
+            from jepa_predictor import JEPAPredictor
+
+            student_backbone = self.mvnetwork.aggregation_model.model
+            self.teacher_backbone = copy.deepcopy(student_backbone)
+            for p in self.teacher_backbone.parameters():
+                p.requires_grad = False
+
+            # T: number of temporal tokens per view; 16 fallback for flat backbones
+            T = self._tokens_per_view if self._tokens_per_view is not None else 16
+            num_heads_jepa = next(h for h in [8, 4, 2, 1] if self.feat_dim % h == 0)
+
+            # Learnable position queries — one vector per temporal slot
+            self.jepa_target_queries = nn.Parameter(
+                torch.randn(1, T, self.feat_dim) * 0.02
+            )
+            self.jepa_predictor = JEPAPredictor(
+                dim=self.feat_dim,
+                num_layers=2,
+                num_heads=num_heads_jepa,
+            )
+
+    # ------------------------------------------------------------------
+    # JEPA helpers (only active when use_jepa=True)
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def _get_teacher_targets(self, mvimages: torch.Tensor, v_mask: int) -> torch.Tensor:
+        """Teacher backbone features for view v_mask; shape [B, T', D]."""
+        B, V, C, T, H, W = mvimages.shape
+        x = mvimages.view(B * V, C, T, H, W)
+        tokens = self.teacher_backbone(x)
+        if tokens.dim() == 2:
+            tokens = tokens.unsqueeze(1)  # flat backbone → [B*V, 1, D]
+        tokens = tokens.view(B, V, tokens.shape[1], tokens.shape[2])  # [B, V, T', D]
+        return tokens[:, v_mask].detach()  # [B, T', D]
+
+    @torch.no_grad()
+    def _get_teacher_temporal(self, mvimages: torch.Tensor, frame_slice: slice):
+        """Teacher backbone tokens for frame_slice of view 0; None if not temporal."""
+        B, V, C, T, H, W = mvimages.shape
+        view0 = mvimages[:, 0]
+        tokens = self.teacher_backbone(view0)
+        if tokens.dim() == 2 or tokens.shape[1] < 10:
+            return None
+        return tokens[:, frame_slice].detach()  # [B, n_frames, D]
+
+    def compute_jepa_loss(self, mvimages: torch.Tensor) -> torch.Tensor:
+        """
+        Compute JEPA auxiliary loss.
+
+        Objective 1 (cross-view): randomly mask one view in the aggregator;
+        predict the teacher's backbone representation of that view.
+
+        Objective 2 (temporal, optional): predict teacher tokens for central
+        frames 6-9 of view 0 using position queries 6-9. Only active when the
+        backbone returns >= 10 temporal tokens (e.g. AIM, V-JEPA2).
+
+        Returns a scalar loss to be weighted by λ(t) before adding to
+        the supervised loss.
+        """
+        B, V = mvimages.shape[:2]
+        v_mask = torch.randint(0, V, (1,)).item()
+
+        # --- cross-view objective ---
+        teacher_cv = self._get_teacher_targets(mvimages, v_mask)  # [B, T', D]
+        T_prime = teacher_cv.shape[1]
+
+        agg = self.mvnetwork.aggregation_model
+        student_ctx, _, _ = agg.get_tokens_masked(mvimages, v_mask)  # [B, V*T'', D]
+
+        T_eff = min(T_prime, self.jepa_target_queries.shape[1])
+        queries_cv = self.jepa_target_queries[:, :T_eff].expand(B, -1, -1)
+        predicted_cv = self.jepa_predictor(student_ctx, queries_cv)
+        loss_cv = F.smooth_l1_loss(predicted_cv, teacher_cv[:, :T_eff].detach())
+
+        # --- temporal objective (Phase 2 — disabled for flat backbones) ---
+        T_q = self.jepa_target_queries.shape[1]
+        teacher_t = self._get_teacher_temporal(mvimages, slice(6, 10))
+        if teacher_t is not None and T_q >= 10:
+            queries_t = self.jepa_target_queries[:, 6:10].expand(B, -1, -1)
+            predicted_t = self.jepa_predictor(student_ctx, queries_t)
+            loss_t = F.smooth_l1_loss(predicted_t, teacher_t.detach())
+            return loss_cv + 0.5 * loss_t
+
+        return loss_cv
+
+    def update_teacher_ema(self, decay: float = 0.999) -> None:
+        """EMA update of teacher backbone from student backbone weights."""
+        student_backbone = self.mvnetwork.aggregation_model.model
+        for s, t in zip(
+            student_backbone.parameters(), self.teacher_backbone.parameters()
+        ):
+            t.data.mul_(decay).add_(s.data, alpha=1 - decay)
 
     def forward(self, mvimages: torch.Tensor, text_features: torch.Tensor = None):
         if self.decoder is not None:

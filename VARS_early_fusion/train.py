@@ -59,6 +59,13 @@ def ordinal_loss(logits, targets_or_labels, pos_weight=None):
     return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight)
 
 
+def lambda_schedule(epoch: int, warmup_epochs: int = 2, lambda_max: float = 0.1) -> float:
+    """Linear warmup from 0 to lambda_max over warmup_epochs, then constant."""
+    if epoch < warmup_epochs:
+        return lambda_max * (epoch / warmup_epochs)
+    return lambda_max
+
+
 def temporal_entropy_loss(temporal_weights):
     """
     Encourages temporal attention weights to be peaked (low entropy)
@@ -269,6 +276,8 @@ def trainer(
     train_all_but_test=False,
     clip_weight=0.0,
     clip_embeddings_path="",
+    jepa_lambda_max=0.0,
+    jepa_warmup_epochs=2,
 ):
     logging.info("start training")
     best_val = 0.0
@@ -332,6 +341,8 @@ def trainer(
         if clip_weight > 0 and (epoch + 1) <= clip_warmup_epochs:
             clip_weight_epoch = 0.0
 
+        lam = lambda_schedule(epoch, jepa_warmup_epochs, jepa_lambda_max)
+
         # --- Train ---
         pred_file, loss_act, loss_sev = _train_epoch(
             train_loader,
@@ -349,6 +360,7 @@ def trainer(
             uncertainty_weighter=uncertainty_weighter,
             clip_loss_fn=clip_loss_fn,
             clip_weight=clip_weight_epoch,
+            jepa_lambda=lam,
         )
         if not train_all_but_test:
             results = evaluate(
@@ -476,6 +488,7 @@ def _train_epoch(
     uncertainty_weighter=None,
     clip_loss_fn=None,
     clip_weight=0.0,
+    jepa_lambda=0.0,
 ):
     if train:
         model.train()
@@ -490,7 +503,9 @@ def _train_epoch(
     loss_total_act = 0.0
     loss_total_sev = 0.0
     loss_total_clip = 0.0
+    loss_total_jepa = 0.0
     clip_batches = 0
+    jepa_batches = 0
     n_batches = 0
 
     criterion_action = criterion["action"]
@@ -639,6 +654,12 @@ def _train_epoch(
             if loss_clip is not None:
                 total_loss = total_loss + clip_weight * loss_clip
 
+            if train and jepa_lambda > 0 and getattr(model, "jepa_predictor", None) is not None:
+                loss_jepa = model.compute_jepa_loss(mvclips)
+                total_loss = total_loss + jepa_lambda * loss_jepa
+                loss_total_jepa += loss_jepa.item()
+                jepa_batches += 1
+
             if train:
                 (total_loss / accum_steps).backward()
                 if (n_batches + 1) % accum_steps == 0:
@@ -646,6 +667,8 @@ def _train_epoch(
                     optimizer.step()
                     optimizer.zero_grad()
                     ema.update()
+                    if getattr(model, "jepa_predictor", None) is not None:
+                        model.update_teacher_ema()
 
             loss_total_sev += loss_sev.item()
             loss_total_act += loss_act.item()
@@ -666,6 +689,9 @@ def _train_epoch(
     if train and clip_batches > 0:
         avg_clip = loss_total_clip / clip_batches
         logging.info(f"  clip_loss={avg_clip:.4f} (weight={clip_weight:.3f})")
+    if train and jepa_batches > 0:
+        avg_jepa = loss_total_jepa / jepa_batches
+        logging.info(f"  jepa_loss={avg_jepa:.4f} (lam={jepa_lambda:.3f})")
     return prediction_file, avg_act, avg_sev
 
 

@@ -30,6 +30,7 @@ class MultiViewDataset(Dataset):
         center_weighted=False,
         backbone_type=None,
         descriptions_path: str = None,
+        train_sample_views: int = 2,
     ):
         self.split = split
         self.start = start
@@ -41,6 +42,7 @@ class MultiViewDataset(Dataset):
         self.factor = (end - start) / (((end - start) / 25) * fps)
         self.center_weighted = center_weighted
         self.backbone_type = backbone_type
+        self.train_sample_views = train_sample_views
         self.vjepa_num_frames = 8 if backbone_type == "intern_video2_dist_b" else 16
         self.text_embeddings = None
         self._missing_text_embeddings = set()
@@ -282,9 +284,16 @@ class MultiViewDataset(Dataset):
         if len(processed_views) == 0:
             return self.__getitem__(random.randint(0, self.length - 1))
 
-        # Random view dropout during training (view-level regularisation)
-        if self.split == "Train" and len(processed_views) > 2:
-            processed_views = random.sample(processed_views, 2)
+        # View sampling during training: drop down or pad up to train_sample_views.
+        if self.split == "Train":
+            if len(processed_views) > self.train_sample_views:
+                processed_views = random.sample(processed_views, self.train_sample_views)
+            elif len(processed_views) < self.train_sample_views:
+                n_have = len(processed_views)
+                n_need = self.train_sample_views - n_have
+                replay_pool = processed_views[1:] if n_have > 1 else processed_views
+                for i in range(n_need):
+                    processed_views.append(replay_pool[i % len(replay_pool)])
 
         videos = torch.stack(processed_views, dim=0)
 

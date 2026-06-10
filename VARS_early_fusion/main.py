@@ -223,6 +223,9 @@ def main(args):
     use_mffm = args.use_mffm
     use_decoder = args.use_decoder
     descriptions_path = args.descriptions_path
+    use_jepa = args.use_jepa
+    jepa_lambda_max = args.jepa_lambda_max
+    jepa_warmup_epochs = args.jepa_warmup_epochs
 
     number_of_frames = int(
         (end_frame - start_frame) / (((end_frame - start_frame) / 25) * fps)
@@ -328,6 +331,7 @@ def main(args):
         fusion_mode=fusion_mode,
         backbone_type=pre_model,
         descriptions_path=descriptions_path,
+        train_sample_views=args.train_sample_views,
     )
 
     if only_evaluation == 0:
@@ -492,6 +496,7 @@ def main(args):
             clip_embeddings_path=clip_embeddings_path,
             use_mffm=use_mffm,
             use_decoder=use_decoder,
+            use_jepa=use_jepa,
         ).cuda()
         backbone_prefix = "aggregation_model.model."
         logging.info(
@@ -504,6 +509,10 @@ def main(args):
         if use_decoder and pooling_type != "transformer":
             logging.warning(
                 "--use_decoder expects pooling_type='transformer' for token access"
+            )
+        if use_jepa and pooling_type != "transformer":
+            logging.warning(
+                "--use_jepa requires pooling_type='transformer'; disabling JEPA."
             )
 
     if use_mffm and not descriptions_path:
@@ -789,6 +798,8 @@ def main(args):
         train_all_but_test=train_all_but_test,
         clip_weight=clip_weight,
         clip_embeddings_path=clip_embeddings_path,
+        jepa_lambda_max=jepa_lambda_max,
+        jepa_warmup_epochs=jepa_warmup_epochs,
     )
     return 0
 
@@ -809,6 +820,12 @@ if __name__ == "__main__":
     parser.add_argument("--end_frame", default=125, type=int)
     parser.add_argument("--fps", default=25, type=int)
     parser.add_argument("--num_views", default=5, type=int)
+    parser.add_argument(
+        "--train_sample_views",
+        default=2,
+        type=int,
+        help="Number of views randomly sampled per training sample (view dropout regularisation)",
+    )
     parser.add_argument("--data_aug", default="Yes", type=str)
     parser.add_argument(
         "--aug_preset",
@@ -853,6 +870,24 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Enable task-specific query decoder between tokens and heads",
+    )
+    parser.add_argument(
+        "--use_jepa",
+        action="store_true",
+        default=False,
+        help="Enable JEPA self-supervised auxiliary objectives (requires --pooling_type transformer)",
+    )
+    parser.add_argument(
+        "--jepa_lambda_max",
+        default=0.1,
+        type=float,
+        help="Maximum JEPA loss weight, ramped up over --jepa_warmup_epochs",
+    )
+    parser.add_argument(
+        "--jepa_warmup_epochs",
+        default=2,
+        type=int,
+        help="Epochs to linearly ramp JEPA lambda from 0 to jepa_lambda_max",
     )
     parser.add_argument(
         "--descriptions_path",
