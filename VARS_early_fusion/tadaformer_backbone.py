@@ -1,15 +1,15 @@
 """
 tadaformer_backbone.py
 ======================
-TAdaFormer-B/16 as a drop-in backbone for MVAggregate.
+TAdaFormer-B/16 and L/14 as drop-in backbones for MVAggregate.
 
 Input  : [B, C, T, H, W]
-Output : [B, 768]
+Output : [B, 768] or [B, 1024] depending on arch
 
 Notes:
 - Optionally renormalizes from MViT/ImageNet stats to CLIP stats
 - num_frames=16, tublet_stride=2 → 8 temporal tokens
-- forward() returns [B, 768] via CLS token mean across temporal dim
+- forward() returns [B, D] via CLS token mean across temporal dim
 """
 
 import os, sys
@@ -77,6 +77,48 @@ def _make_b16_cfg(num_frames=16, num_classes=0, drop_path=0.1):
     )
 
 
+def _make_l14_cfg(num_frames=16, num_classes=0, drop_path=0.1):
+    return _Cfg(
+        {
+            "VIDEO": {
+                "BACKBONE": {
+                    "META_ARCH": "VisionTransformer",
+                    "INPUT_RES": 224,
+                    "PATCH_SIZE": 14,
+                    "TUBLET_SIZE": 3,
+                    "TUBLET_STRIDE": 2,
+                    "NUM_FEATURES": 1024,
+                    "NUM_OUT_FEATURES": 1024,
+                    "DEPTH": 24,
+                    "NUM_HEADS": 16,
+                    "DROP_PATH": drop_path,
+                    "ATTN_DROPOUT": 0.0,
+                    "REQUIRE_PROJ": False,
+                    "ATTN_MASK_ENABLE": False,
+                    "DOUBLE_TADA": False,
+                    "FREEZE": False,
+                    "REDUCTION": 2,
+                    "TEMP_ENHANCE": False,
+                    "BRANCH": {
+                        "NAME": "TAdaFormerBlock",
+                        "ROUTE_FUNC_K": [3, 3],
+                        "ROUTE_FUNC_R": 2,
+                    },
+                },
+                "HEAD": {
+                    "NAME": "BaseHead",
+                    "OUTPUT_DIM": 512,
+                    "NUM_CLASSES": num_classes,
+                    "DROPOUT_RATE": 0.5,
+                },
+            },
+            "DATA": {
+                "NUM_INPUT_FRAMES": num_frames,
+            },
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Backbone wrapper
 # ---------------------------------------------------------------------------
@@ -84,12 +126,13 @@ def _make_b16_cfg(num_frames=16, num_classes=0, drop_path=0.1):
 
 class TAdaFormerBackbone(nn.Module):
     """
-    Wraps TAdaFormer-B/16 for use as a drop-in backbone in MVAggregate.
+    Wraps TAdaFormer-B/16 or L/14 for use as a drop-in backbone in MVAggregate.
 
     Args:
         checkpoint_path : path to downloaded .pyth checkpoint
         num_frames      : must match the checkpoint (16 for K400/K710 ckp)
         drop_path       : stochastic depth rate (0.1 for fine-tuning)
+        arch            : "b16" (768-dim, 12 layers) or "l14" (1024-dim, 24 layers)
     """
 
     # CLIP normalisation constants (from tadaformer_b16_k400_16f.yaml)
@@ -102,18 +145,25 @@ class TAdaFormerBackbone(nn.Module):
         num_frames: int = 16,
         drop_path: float = 0.1,
         apply_renormalize: bool = True,
+        arch: str = "b16",
     ):
         super().__init__()
         self.num_frames = num_frames
-        self.feat_dim = 768
         self.apply_renormalize = apply_renormalize
         self.fc = nn.Sequential()  # stub for MVNetwork compat
+
+        if arch == "l14":
+            cfg = _make_l14_cfg(num_frames=num_frames, drop_path=drop_path)
+            self.feat_dim = 1024
+        else:
+            cfg = _make_b16_cfg(num_frames=num_frames, drop_path=drop_path)
+            self.feat_dim = 768
+
+        self._arch = arch
 
         # Register normalisation as buffers so they move with .cuda()
         self.register_buffer("norm_mean", torch.tensor(self.MEAN).view(1, 3, 1, 1, 1))
         self.register_buffer("norm_std", torch.tensor(self.STD).view(1, 3, 1, 1, 1))
-
-        cfg = _make_b16_cfg(num_frames=num_frames, drop_path=drop_path)
 
         # Import after sys.path is set
         import tadaconv.models.module_zoo.branches  # trigger BRANCH_REGISTRY
@@ -124,7 +174,7 @@ class TAdaFormerBackbone(nn.Module):
         if checkpoint_path and os.path.exists(checkpoint_path):
             self._load_checkpoint(checkpoint_path)
         else:
-            print(f"[TAdaFormer] WARNING: checkpoint not found at {checkpoint_path}")
+            print(f"[TAdaFormer-{arch}] WARNING: checkpoint not found at {checkpoint_path}")
 
     def _load_checkpoint(self, path):
         ckpt = torch.load(path, map_location="cpu")
@@ -147,7 +197,7 @@ class TAdaFormerBackbone(nn.Module):
         }
 
         missing, unexpected = self._vit.load_state_dict(sd, strict=False)
-        print(f"[TAdaFormer] Loaded {path}")
+        print(f"[TAdaFormer-{self._arch}] Loaded {path}")
         if missing:
             print(
                 f"  Missing ({len(missing)}): {missing[:3]}{'...' if len(missing)>3 else ''}"
@@ -192,13 +242,13 @@ class TAdaFormerBackbone(nn.Module):
             x = self._renormalize(x)
 
         if return_tokens:
-            # Returns CLS token at each temporal step: [B, T', 768]
+            # Returns CLS token at each temporal step: [B, T', D]
             # T' = num_frames // TUBLET_STRIDE = 16 // 2 = 8
-            raw = self._vit.forward_wo_head(x)  # [B*T', patches+1, 768]
+            raw = self._vit.forward_wo_head(x)  # [B*T', patches+1, D]
             T_out = self.num_frames // 2
-            tokens = raw[:, 0, :].reshape(B, T_out, self.feat_dim)  # [B, T', 768]
+            tokens = raw[:, 0, :].reshape(B, T_out, self.feat_dim)  # [B, T', D]
             tokens = self._vit.ln_post(tokens)  # apply layer norm
-            return tokens  # [B, 8, 768]
+            return tokens  # [B, 8, D]
 
         out = self._vit(x)  # [B, 768]
         return out

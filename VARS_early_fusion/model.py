@@ -256,6 +256,18 @@ class MVNetwork(torch.nn.Module):
             )
             self.feat_dim = 768
 
+        elif net_name == "tadaformer_l14":
+            from tadaformer_backbone import TAdaFormerBackbone
+
+            network = TAdaFormerBackbone(
+                checkpoint_path="/net/tscratch/people/plgaszos/sn-mvfoul/checkpoints/tadaformer_l14_k710.pth",
+                num_frames=16,
+                drop_path=0.1,
+                apply_renormalize=False,
+                arch="l14",
+            )
+            self.feat_dim = network.feat_dim  # 1024
+
         elif net_name == "aim_vitb16":
             from aim_backbone import AIMBackbone
 
