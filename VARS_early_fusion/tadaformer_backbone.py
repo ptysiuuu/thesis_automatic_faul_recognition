@@ -16,6 +16,7 @@ import os, sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 TADACONV_ROOT = "/net/tscratch/people/plgaszos/sn-mvfoul/TAdaConv"
 if TADACONV_ROOT not in sys.path:
@@ -175,6 +176,11 @@ class TAdaFormerBackbone(nn.Module):
             self._load_checkpoint(checkpoint_path)
         else:
             print(f"[TAdaFormer-{arch}] WARNING: checkpoint not found at {checkpoint_path}")
+        for block in self._backbone.layers:
+            orig_fwd = block.forward
+            block.forward = lambda x, fn=orig_fwd: checkpoint(
+                fn, x, use_reentrant=False
+            )
 
     def _load_checkpoint(self, path):
         ckpt = torch.load(path, map_location="cpu")
