@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=14:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=tada_l14_resume_%j.out
 
 export HF_HOME=/net/tscratch/people/plgaszos/.cache/huggingface
@@ -23,8 +23,8 @@ python main.py \
     --path             "$DATASET_PATH" \
     --pre_model        tadaformer_l14 \
     --pooling_type     transformer \
-    --batch_size       1 \
-    --accum_steps      8 \
+    --batch_size       4 \
+    --accum_steps      2 \
     --LR               3e-5 \
     --weight_decay     1e-3 \
     --max_epochs       30 \
@@ -41,7 +41,7 @@ python main.py \
     --aux_weight       0.2 \
     --ema_decay        0.999 \
     --freeze_epoch     5 \
-    --model_name       VARS_tada_l14 \
+    --model_name       VARS_tada_l14_resume \
     --GPU              0 \
     --max_num_worker   16 \
     --continue_training \
