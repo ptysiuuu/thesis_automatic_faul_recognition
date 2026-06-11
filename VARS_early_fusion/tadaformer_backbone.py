@@ -176,7 +176,7 @@ class TAdaFormerBackbone(nn.Module):
             self._load_checkpoint(checkpoint_path)
         else:
             print(f"[TAdaFormer-{arch}] WARNING: checkpoint not found at {checkpoint_path}")
-        for block in self._backbone.layers:
+        for block in self._vit.layers:
             orig_fwd = block.forward
             block.forward = lambda x, fn=orig_fwd: checkpoint(
                 fn, x, use_reentrant=False
