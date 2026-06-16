@@ -337,6 +337,10 @@ def main(args):
         backbone_type=pre_model,
         descriptions_path=descriptions_path,
         train_sample_views=args.train_sample_views,
+        compact_hdf5=args.compact_hdf5,
+        compact_hdf5_dir=args.compact_hdf5_dir,
+        num_frames=args.num_frames,
+        stored_frames=args.stored_frames,
     )
 
     if only_evaluation == 0:
@@ -492,6 +496,9 @@ def main(args):
             f"T={number_of_frames}, cascade_severity={cascade_severity})"
         )
     else:
+        _backbone_num_frames = (
+            args.num_frames if args.compact_hdf5 else args.backbone_num_frames
+        )
         model = MVNetwork(
             net_name=pre_model,
             agr_type=pooling_type,
@@ -503,7 +510,7 @@ def main(args):
             use_decoder=use_decoder,
             use_jepa=use_jepa,
             backbone_ckpt_dir=args.backbone_ckpt_dir,
-            backbone_num_frames=args.backbone_num_frames,
+            backbone_num_frames=_backbone_num_frames,
         ).cuda()
         backbone_prefix = "aggregation_model.model."
         logging.info(
@@ -1051,6 +1058,30 @@ if __name__ == "__main__":
         default=None,
         type=str,
         help="Directory for HDF5 embedding files; defaults to --data_dir if not set",
+    )
+    parser.add_argument(
+        "--compact_hdf5",
+        action="store_true",
+        default=False,
+        help="Use compact HDF5 format (uint8, per-frame stored). If not set, uses the original pre-processed tensor format.",
+    )
+    parser.add_argument(
+        "--compact_hdf5_dir",
+        default=None,
+        type=str,
+        help="Directory containing compact HDF5 files (Train.hdf5, Valid.hdf5, Test.hdf5)",
+    )
+    parser.add_argument(
+        "--num_frames",
+        default=16,
+        type=int,
+        help="Frames fed to the backbone (16 or 32). In compact HDF5 mode, also sets the backbone temporal dim.",
+    )
+    parser.add_argument(
+        "--stored_frames",
+        default=32,
+        type=int,
+        help="Frames stored in the compact HDF5. Subsampling happens at load time from stored_frames → num_frames.",
     )
     parser.add_argument(
         "--keep_top_k",

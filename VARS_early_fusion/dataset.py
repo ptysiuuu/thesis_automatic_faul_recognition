@@ -3,6 +3,7 @@ import torch
 import random
 from data_loader import label2vectormerge, clips2vectormerge
 from torchvision.io.video import read_video
+import torchvision.transforms as transforms
 import warnings
 import logging
 import h5py
@@ -13,6 +14,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 logging.getLogger("torchvision").setLevel(logging.ERROR)
 
 HDF5_ROOT = "/net/tscratch/people/plgaszos/SoccerNet_HDF5"
+
+_CLIP_MEAN = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1)
+_CLIP_STD = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1)
 
 
 class MultiViewDataset(Dataset):
@@ -31,6 +35,10 @@ class MultiViewDataset(Dataset):
         backbone_type=None,
         descriptions_path: str = None,
         train_sample_views: int = 2,
+        compact_hdf5: bool = False,
+        compact_hdf5_dir: str = None,
+        num_frames: int = 16,
+        stored_frames: int = 32,
     ):
         self.split = split
         self.start = start
@@ -46,6 +54,15 @@ class MultiViewDataset(Dataset):
         self.vjepa_num_frames = 8 if backbone_type == "intern_video2_dist_b" else 16
         self.text_embeddings = None
         self._missing_text_embeddings = set()
+        self.compact_hdf5 = compact_hdf5
+        self.num_frames = num_frames
+        self.stored_frames = stored_frames
+        self._compact_hdf5_path = (
+            os.path.join(compact_hdf5_dir, f"{split}.hdf5")
+            if compact_hdf5 and compact_hdf5_dir
+            else None
+        )
+        self._compact_hdf5 = None
 
         if split != "Chall":
             (
@@ -103,10 +120,14 @@ class MultiViewDataset(Dataset):
                     f"Loaded {len(self.text_embeddings)} text embeddings from {descriptions_path}"
                 )
 
+        _src = (
+            "compact HDF5"
+            if compact_hdf5
+            else ("HDF5" if self._hdf5_path else "fallback mp4")
+        )
         print(
             f"Loaded {self.length} actions for {split} "
-            f"({'HDF5' if self._hdf5_path else 'fallback mp4'}, "
-            f"{'early fusion' if fusion_mode else 'multi-view'})"
+            f"({_src}, {'early fusion' if fusion_mode else 'multi-view'})"
         )
 
     def _get_hdf5(self):
@@ -115,6 +136,13 @@ class MultiViewDataset(Dataset):
         if self._hdf5 is None:
             self._hdf5 = h5py.File(self._hdf5_path, "r", swmr=True)
         return self._hdf5
+
+    def _get_compact_hdf5(self):
+        if self._compact_hdf5_path is None:
+            return None
+        if self._compact_hdf5 is None:
+            self._compact_hdf5 = h5py.File(self._compact_hdf5_path, "r", swmr=True)
+        return self._compact_hdf5
 
     def _sample_indices_center_weighted(self, total_frames: int, n_frames: int) -> list:
         """
@@ -174,7 +202,43 @@ class MultiViewDataset(Dataset):
             replacement=True,
         )
 
+    def _process_clip_compact(self, clip_path, hdf5):
+        parts = clip_path.split(os.sep)
+        action = parts[-2]
+        view_id = parts[-1].replace(".mp4", "")
+        key = f"{action}/{view_id}"
+
+        if key not in hdf5:
+            return None
+
+        raw = hdf5[key][:]  # [stored_frames, H, W, C] uint8
+
+        # Subsample stored_frames → num_frames
+        idx = np.linspace(0, self.stored_frames - 1, self.num_frames).round().astype(int)
+        idx = np.clip(idx, 0, raw.shape[0] - 1)
+        frames = raw[idx]  # [num_frames, H, W, C]
+
+        # [T, H, W, C] → [T, C, H, W] float32 in [0, 1]
+        frames = torch.from_numpy(frames).float() / 255.0
+        frames = frames.permute(0, 3, 1, 2)
+
+        # Spatial augmentation (training only)
+        if self.split == "Train" and self.transform is not None:
+            frames = self.transform(frames)
+
+        # CLIP normalization
+        mean = _CLIP_MEAN.to(frames.device)
+        std = _CLIP_STD.to(frames.device)
+        frames = (frames - mean) / std
+
+        return frames.permute(1, 0, 2, 3)  # [C, T, H, W]
+
     def _process_clip(self, clip_path):
+        if self.compact_hdf5:
+            hdf5 = self._get_compact_hdf5()
+            if hdf5 is not None:
+                return self._process_clip_compact(clip_path, hdf5)
+            return None
         hdf5 = self._get_hdf5()
         if hdf5 is not None:
             return self._process_clip_hdf5(clip_path, hdf5)
@@ -375,3 +439,5 @@ class MultiViewDataset(Dataset):
     def __del__(self):
         if hasattr(self, "_hdf5") and self._hdf5 is not None:
             self._hdf5.close()
+        if hasattr(self, "_compact_hdf5") and self._compact_hdf5 is not None:
+            self._compact_hdf5.close()
