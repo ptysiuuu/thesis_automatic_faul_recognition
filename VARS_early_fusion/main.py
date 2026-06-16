@@ -503,6 +503,7 @@ def main(args):
             use_decoder=use_decoder,
             use_jepa=use_jepa,
             backbone_ckpt_dir=args.backbone_ckpt_dir,
+            backbone_num_frames=args.backbone_num_frames,
         ).cuda()
         backbone_prefix = "aggregation_model.model."
         logging.info(
@@ -1026,6 +1027,18 @@ if __name__ == "__main__":
         default="",
         type=str,
         help="Directory containing pretrained backbone .pth files",
+    )
+    parser.add_argument(
+        "--backbone_num_frames",
+        default=None,
+        type=int,
+        help=(
+            "Override the temporal frame count inside the backbone "
+            "(e.g. 32 for TAdaFormer-L/14 32-frame). "
+            "Temporal positional embeddings are interpolated automatically "
+            "when the value differs from the checkpoint default (16). "
+            "Use --fps to control how many frames the dataset delivers."
+        ),
     )
     parser.add_argument(
         "--hf_cache_dir",

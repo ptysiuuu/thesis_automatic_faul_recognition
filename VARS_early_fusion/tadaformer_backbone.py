@@ -182,6 +182,48 @@ class TAdaFormerBackbone(nn.Module):
                 fn, x, use_reentrant=False
             )
 
+    def _maybe_interpolate_temporal(self, sd: dict) -> dict:
+        """
+        Interpolate temporal positional embeddings to match self.num_frames.
+
+        TAdaFormer stores temporal position embeddings (named *temporal*) with
+        a temporal axis equal to the num_frames the checkpoint was trained on.
+        When fine-tuning with a different frame count we linearly interpolate
+        along that axis so the rest of the weights can load cleanly.
+
+        Handles [1, T, D] and [T, D] layouts.
+        """
+        tgt_T = self.num_frames
+        out = {}
+        for name, tensor in sd.items():
+            if "temporal" in name.lower():
+                if tensor.dim() == 3 and 2 <= tensor.shape[1] <= 128:
+                    src_T = tensor.shape[1]
+                    if src_T != tgt_T:
+                        # [1, src_T, D] → linear interp → [1, tgt_T, D]
+                        emb = tensor.float().permute(0, 2, 1)  # [1, D, src_T]
+                        emb = F.interpolate(
+                            emb, size=tgt_T, mode="linear", align_corners=False
+                        )
+                        tensor = emb.permute(0, 2, 1).to(tensor.dtype)
+                        print(
+                            f"[TAdaFormer-{self._arch}] Interpolated '{name}': T={src_T} → T={tgt_T}"
+                        )
+                elif tensor.dim() == 2 and 2 <= tensor.shape[0] <= 128:
+                    src_T = tensor.shape[0]
+                    if src_T != tgt_T:
+                        # [src_T, D] → linear interp → [tgt_T, D]
+                        emb = tensor.float().unsqueeze(0).permute(0, 2, 1)  # [1, D, src_T]
+                        emb = F.interpolate(
+                            emb, size=tgt_T, mode="linear", align_corners=False
+                        )
+                        tensor = emb.permute(0, 2, 1).squeeze(0).to(tensor.dtype)
+                        print(
+                            f"[TAdaFormer-{self._arch}] Interpolated '{name}': T={src_T} → T={tgt_T}"
+                        )
+            out[name] = tensor
+        return out
+
     def _load_checkpoint(self, path):
         ckpt = torch.load(path, map_location="cpu")
 
@@ -201,6 +243,9 @@ class TAdaFormerBackbone(nn.Module):
             for k, v in sd.items()
             if not k.startswith("head.") and not k.startswith("proj")
         }
+
+        # Interpolate temporal positional embeddings when num_frames != checkpoint default
+        sd = self._maybe_interpolate_temporal(sd)
 
         missing, unexpected = self._vit.load_state_dict(sd, strict=False)
         print(f"[TAdaFormer-{self._arch}] Loaded {path}")
@@ -249,12 +294,12 @@ class TAdaFormerBackbone(nn.Module):
 
         if return_tokens:
             # Returns CLS token at each temporal step: [B, T', D]
-            # T' = num_frames // TUBLET_STRIDE = 16 // 2 = 8
+            # T' = num_frames // TUBLET_STRIDE = num_frames // 2
             raw = self._vit.forward_wo_head(x)  # [B*T', patches+1, D]
             T_out = self.num_frames // 2
             tokens = raw[:, 0, :].reshape(B, T_out, self.feat_dim)  # [B, T', D]
             tokens = self._vit.ln_post(tokens)  # apply layer norm
-            return tokens  # [B, 8, D]
+            return tokens  # [B, T', D]
 
         out = self._vit(x)  # [B, 768]
         return out

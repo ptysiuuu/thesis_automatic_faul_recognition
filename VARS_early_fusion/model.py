@@ -204,6 +204,7 @@ class MVNetwork(torch.nn.Module):
         use_decoder: bool = False,
         use_jepa: bool = False,
         backbone_ckpt_dir: str = "",
+        backbone_num_frames: int = None,
     ):
         super().__init__()
         self.net_name = net_name
@@ -251,9 +252,10 @@ class MVNetwork(torch.nn.Module):
         elif net_name == "tadaformer_b16":
             from tadaformer_backbone import TAdaFormerBackbone
 
+            _tada_frames = backbone_num_frames if backbone_num_frames is not None else 16
             network = TAdaFormerBackbone(
                 checkpoint_path=os.path.join(backbone_ckpt_dir, "tadaformer_b16_k710.pth"),
-                num_frames=16,
+                num_frames=_tada_frames,
                 drop_path=0.1,
                 apply_renormalize=False,
             )
@@ -262,9 +264,15 @@ class MVNetwork(torch.nn.Module):
         elif net_name == "tadaformer_l14":
             from tadaformer_backbone import TAdaFormerBackbone
 
+            _tada_frames = backbone_num_frames if backbone_num_frames is not None else 16
+            _l14_ckpt = (
+                f"l14_clip_k710_{_tada_frames}f.pth"
+                if _tada_frames != 16
+                else "tadaformer_l14_k710.pth"
+            )
             network = TAdaFormerBackbone(
-                checkpoint_path=os.path.join(backbone_ckpt_dir, "tadaformer_l14_k710.pth"),
-                num_frames=16,
+                checkpoint_path=os.path.join(backbone_ckpt_dir, _l14_ckpt),
+                num_frames=_tada_frames,
                 drop_path=0.1,
                 apply_renormalize=False,
                 arch="l14",

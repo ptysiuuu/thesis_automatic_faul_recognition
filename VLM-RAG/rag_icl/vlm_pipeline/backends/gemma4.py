@@ -1,13 +1,15 @@
 """
-backends/qwen3vl.py
-===================
-Qwen3-VL family backend: 8B, 30B, 235B.
+backends/gemma4.py
+==================
+Gemma 4 vision-language model backend: 12B and 31B.
 
-Key differences from Qwen2.5-VL:
-- apply_chat_template handles vision inputs directly (no process_vision_info).
-- Supports enable_thinking via apply_chat_template kwarg (or /think prefix fallback).
-- device_map="auto" so SLURM --gres=gpu:N controls how many GPUs are visible.
-- Optional 4-bit / 8-bit quantization for large models.
+Uses AutoModelForImageTextToText + AutoProcessor.
+device_map="auto" so SLURM --gres=gpu:N controls GPU count.
+Optional 4-bit / 8-bit quantization.
+
+Thinking mode: Gemma4 has no native /think token. When enable_thinking=True
+we prepend a chain-of-thought instruction asking the model to reason before
+answering, then strip any <think>...</think> block from the output.
 """
 
 import re
@@ -17,16 +19,22 @@ from PIL import Image
 
 from ..prompts.templates import SYSTEM_PROMPT
 
+_COT_INSTRUCTION = (
+    "Before giving your final JSON answer, briefly reason about the force level, "
+    "body part, and whether the action is aimed at the ball. "
+    "Then output ONLY the JSON on the last line."
+)
+
 
 def _strip_thinking(text: str) -> str:
-    """Remove <think>...</think> block emitted by thinking-mode models."""
+    """Remove <think>...</think> if present, then return the remainder."""
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
-class Qwen3VLBackend:
+class Gemma4Backend:
     def __init__(
         self,
-        model_name: str = "Qwen/Qwen3-VL-8B-Instruct",
+        model_name: str = "google/gemma-4-12b-it",
         enable_thinking: bool = False,
         quantize: str = "",
     ):
@@ -34,7 +42,7 @@ class Qwen3VLBackend:
 
         self.enable_thinking = enable_thinking
         print(
-            f"[Qwen3VL] Loading {model_name} "
+            f"[Gemma4] Loading {model_name} "
             f"(thinking={'ON' if enable_thinking else 'OFF'}, quantize={quantize or 'none'})..."
         )
 
@@ -71,21 +79,18 @@ class Qwen3VLBackend:
         )
 
         try:
-            from transformers import Qwen3VLForConditionalGeneration
+            from transformers import AutoModelForImageTextToText
 
-            self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+            self.model = AutoModelForImageTextToText.from_pretrained(
                 model_name, **model_kwargs
             )
-        except ImportError:
-            # Older transformers: fall back to Qwen2.5-VL class (same API)
-            from transformers import Qwen2_5_VLForConditionalGeneration
+        except Exception:
+            from transformers import AutoModelForCausalLM
 
-            self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                model_name, **model_kwargs
-            )
+            self.model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
 
         self.model.eval()
-        print("[Qwen3VL] Ready.")
+        print("[Gemma4] Ready.")
 
     def classify(
         self,
@@ -93,65 +98,70 @@ class Qwen3VLBackend:
         prompt: str,
         extra_images: Optional[List[Image.Image]] = None,
     ) -> str:
+        # Flatten frames to a single ordered list with view-label text interleaved
         content = []
+
         if extra_images:
             content.append(
                 {"type": "text", "text": "[Reference examples from training data:]"}
             )
             for img in extra_images:
-                content.append({"type": "image", "image": img})
+                content.append({"type": "image"})
 
         for v_idx, frames in enumerate(frames_per_view):
             label = "Live camera" if v_idx == 0 else f"Replay {v_idx}"
             content.append({"type": "text", "text": f"\n[{label}]"})
-            for frame in frames:
-                content.append({"type": "image", "image": frame})
+            for _ in frames:
+                content.append({"type": "image"})
 
-        # Qwen3 thinking: /think prefix in the user text content
-        text_suffix = f"\n\n/think\n{prompt}" if self.enable_thinking else f"\n\n{prompt}"
-        content.append({"type": "text", "text": text_suffix})
+        text_prompt = (
+            f"\n\n{_COT_INSTRUCTION}\n\n{prompt}"
+            if self.enable_thinking
+            else f"\n\n{prompt}"
+        )
+        content.append({"type": "text", "text": text_prompt})
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": content},
         ]
 
-        max_new_tokens = 4096 if self.enable_thinking else 512
+        # Collect all PIL images in the same order as {"type": "image"} entries
+        all_images: List[Image.Image] = []
+        if extra_images:
+            all_images.extend(extra_images)
+        for frames in frames_per_view:
+            all_images.extend(frames)
 
-        # Try enable_thinking kwarg first (newer transformers); fall back to /think prefix
+        # Apply chat template to get text; processor handles image interleaving
         try:
-            inputs = self.processor.apply_chat_template(
+            text_input = self.processor.apply_chat_template(
                 messages,
-                tokenize=True,
+                tokenize=False,
                 add_generation_prompt=True,
-                return_dict=True,
+            )
+            inputs = self.processor(
+                text=[text_input],
+                images=all_images if all_images else None,
                 return_tensors="pt",
-                enable_thinking=self.enable_thinking,
+                padding=True,
             ).to(self.model.device)
-        except TypeError:
-            inputs = self.processor.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_dict=True,
+        except Exception:
+            # Fallback: some Gemma processor versions accept images= differently
+            inputs = self.processor(
+                text=[f"{SYSTEM_PROMPT}\n\n{prompt}"],
+                images=all_images if all_images else None,
                 return_tensors="pt",
             ).to(self.model.device)
+
+        max_new_tokens = 1024 if self.enable_thinking else 512
 
         with torch.no_grad():
-            generated_ids = self.model.generate(
+            out = self.model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
                 do_sample=False,
             )
 
-        generated_ids_trimmed = [
-            out[len(inp) :] for inp, out in zip(inputs.input_ids, generated_ids)
-        ]
-        raw = self.processor.batch_decode(
-            generated_ids_trimmed,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False,
-        )[0]
-
-        # Always strip think block so callers always receive clean JSON
+        generated = out[:, inputs["input_ids"].shape[1] :]
+        raw = self.processor.batch_decode(generated, skip_special_tokens=True)[0]
         return _strip_thinking(raw)
