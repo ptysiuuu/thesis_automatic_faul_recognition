@@ -83,7 +83,7 @@ def process_split(
         ]
         key_map = {i: key for i, (key, _) in enumerate(pending)}
 
-        n_ok = n_err = 0
+        n_ok = n_err = action_idx = 0
         futures = {}
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             for i, arg in enumerate(decode_args):
@@ -105,6 +105,9 @@ def process_split(
                         n_ok += 1
                     else:
                         n_err += 1
+                    action_idx += 1
+                    if action_idx % 50 == 0:
+                        h5f.flush()
                     pbar.update(1)
 
     print(f"[{split}] Done — {n_ok} written, {n_err} errors → {out_path}")
