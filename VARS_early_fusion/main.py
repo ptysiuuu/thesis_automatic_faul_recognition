@@ -497,7 +497,8 @@ def main(args):
         )
     else:
         _backbone_num_frames = (
-            args.num_frames if args.compact_hdf5 else args.backbone_num_frames
+            args.backbone_num_frames if args.backbone_num_frames is not None
+            else (args.num_frames if args.compact_hdf5 else None)
         )
         model = MVNetwork(
             net_name=pre_model,
