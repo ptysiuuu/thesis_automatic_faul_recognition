@@ -15,7 +15,7 @@ set -euo pipefail
 
 BASE_DIR="${HOME}/thesis_automatic_faul_recognition/VARS_early_fusion"
 CKPT_DIR="${BASE_DIR}/checkpoints"
-DATA_DIR="${HOME}/data/SoccerNet_HDF5"
+DATA_DIR="${HOME}/data/SoccerNet_HDF5_compact"
 HF_CACHE="${HOME}/.cache/huggingface"
 OUT_DIR="${BASE_DIR}/models"
 
@@ -27,6 +27,10 @@ echo "GPUs   : ${CUDA_VISIBLE_DEVICES:-<SLURM-assigned>}"
 echo "Start  : $(date)"
 
 cd "${BASE_DIR}"
+
+# Rename checkpoint to the filename the code constructs from backbone_num_frames=32
+[ -f "${CKPT_DIR}/l14_clip_k710_32f.pth" ] && \
+    mv "${CKPT_DIR}/l14_clip_k710_32f.pth" "${CKPT_DIR}/tadaformer_l14_k710_32f.pth"
 
 module load uv
 uv sync --reinstall
@@ -58,6 +62,8 @@ python main.py \
     --data_dir         "${DATA_DIR}" \
     --output_dir       "${OUT_DIR}" \
     --hf_cache_dir     "${HF_CACHE}" \
+    --compact_hdf5 \
+    --max_num_worker   8 \
     --GPU              0
 
 echo "Done: $(date)"
