@@ -8,8 +8,8 @@
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
 #SBATCH --gres=gpu:1
+#SBATCH --partition=gpu
 #SBATCH --nodelist=h86
-#SBATCH --partition=h86
 # NOTE: submit with dependency on Exp 3A:
 #   JOB3A=$(sbatch --parsable run_exp3a_extract.sh)
 #   sbatch --dependency=afterok:${JOB3A} run_exp3b_aim_mffm.sh
@@ -40,6 +40,8 @@ fi
 
 cd "${BASE_DIR}"
 
+module load uv
+uv sync --reinstall
 source "${BASE_DIR}/.venv/bin/activate"
 
 python main.py \
@@ -66,6 +68,6 @@ python main.py \
     --data_dir          "${DATA_DIR}" \
     --output_dir        "${OUT_DIR}" \
     --hf_cache_dir      "${HF_CACHE}" \
-    --GPU               -1
+    --GPU               0
 
 echo "Done: $(date)"

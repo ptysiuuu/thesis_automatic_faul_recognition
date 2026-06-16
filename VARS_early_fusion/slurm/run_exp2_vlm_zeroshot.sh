@@ -8,8 +8,8 @@
 #SBATCH --mem=128G
 #SBATCH --time=06:00:00
 #SBATCH --gres=gpu:2
+#SBATCH --partition=gpu
 #SBATCH --nodelist=h86
-#SBATCH --partition=h86
 # NOTE: --gres=gpu:2 because Qwen3-VL-30B needs ~60 GB VRAM (2x 96 GB to be safe)
 
 set -euo pipefail
@@ -28,6 +28,8 @@ echo "Start  : $(date)"
 
 cd "${BASE_DIR}"
 
+module load uv
+uv sync --reinstall
 source "${BASE_DIR}/.venv/bin/activate"
 
 python vlm_zeroshot.py \

@@ -8,8 +8,8 @@
 #SBATCH --mem=128G
 #SBATCH --time=10:00:00
 #SBATCH --gres=gpu:2
+#SBATCH --partition=gpu
 #SBATCH --nodelist=h86
-#SBATCH --partition=h86
 # NOTE: Qwen3-VL-30B needs ~60 GB VRAM; 2 GPUs requested for headroom
 
 set -euo pipefail
@@ -28,6 +28,8 @@ echo "Start  : $(date)"
 
 cd "${BASE_DIR}"
 
+module load uv
+uv sync --reinstall
 source "${BASE_DIR}/.venv/bin/activate"
 
 # Extract for Train, Valid, and Test splits

@@ -8,8 +8,8 @@
 #SBATCH --mem=96G
 #SBATCH --time=30:00:00
 #SBATCH --gres=gpu:1
+#SBATCH --partition=gpu
 #SBATCH --nodelist=h86
-#SBATCH --partition=h86
 
 set -euo pipefail
 
@@ -28,6 +28,8 @@ echo "Start  : $(date)"
 
 cd "${BASE_DIR}"
 
+module load uv
+uv sync --reinstall
 source "${BASE_DIR}/.venv/bin/activate"
 
 python main.py \
@@ -56,6 +58,6 @@ python main.py \
     --data_dir         "${DATA_DIR}" \
     --output_dir       "${OUT_DIR}" \
     --hf_cache_dir     "${HF_CACHE}" \
-    --GPU              -1
+    --GPU              0
 
 echo "Done: $(date)"
