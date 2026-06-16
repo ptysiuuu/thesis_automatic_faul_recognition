@@ -188,6 +188,10 @@ def checkArguments(args):
 
 
 def main(args):
+    if args.hf_cache_dir:
+        os.environ["HF_HOME"] = args.hf_cache_dir
+        os.environ["TRANSFORMERS_CACHE"] = args.hf_cache_dir
+
     LR = args.LR
     gamma = args.gamma
     step_size = args.step_size
@@ -200,7 +204,8 @@ def main(args):
     fps = args.fps
     batch_size = args.batch_size
     data_aug = args.data_aug
-    path = args.path
+    path = args.data_dir if args.data_dir else args.path
+    output_dir = args.output_dir
     pooling_type = args.pooling_type
     weighted_loss = args.weighted_loss
     max_num_worker = args.max_num_worker
@@ -237,7 +242,7 @@ def main(args):
     # --- logging ---
     os.makedirs(
         os.path.join(
-            "models",
+            output_dir,
             model_name,
             str(num_views),
             backbone_id,
@@ -247,7 +252,7 @@ def main(args):
         exist_ok=True,
     )
     best_model_path = os.path.join(
-        "models",
+        output_dir,
         model_name,
         str(num_views),
         backbone_id,
@@ -497,6 +502,7 @@ def main(args):
             use_mffm=use_mffm,
             use_decoder=use_decoder,
             use_jepa=use_jepa,
+            backbone_ckpt_dir=args.backbone_ckpt_dir,
         ).cuda()
         backbone_prefix = "aggregation_model.model."
         logging.info(
@@ -800,6 +806,7 @@ def main(args):
         clip_embeddings_path=clip_embeddings_path,
         jepa_lambda_max=jepa_lambda_max,
         jepa_warmup_epochs=jepa_warmup_epochs,
+        keep_top_k=args.keep_top_k,
     )
     return 0
 
@@ -999,6 +1006,44 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Disable ordinal pos_weight on severity loss",
+    )
+
+    # Path configuration
+    parser.add_argument(
+        "--data_dir",
+        default=None,
+        type=str,
+        help="Dataset root directory (overrides --path)",
+    )
+    parser.add_argument(
+        "--output_dir",
+        default="models",
+        type=str,
+        help="Root directory for checkpoint output (default: models)",
+    )
+    parser.add_argument(
+        "--backbone_ckpt_dir",
+        default="",
+        type=str,
+        help="Directory containing pretrained backbone .pth files",
+    )
+    parser.add_argument(
+        "--hf_cache_dir",
+        default="",
+        type=str,
+        help="Override HF_HOME and TRANSFORMERS_CACHE to this directory",
+    )
+    parser.add_argument(
+        "--hdf5_dir",
+        default=None,
+        type=str,
+        help="Directory for HDF5 embedding files; defaults to --data_dir if not set",
+    )
+    parser.add_argument(
+        "--keep_top_k",
+        default=3,
+        type=int,
+        help="Keep this many most-recent per-epoch checkpoints (best_model is never pruned)",
     )
 
     args = parser.parse_args()

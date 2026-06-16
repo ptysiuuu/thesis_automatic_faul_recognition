@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -202,6 +203,7 @@ class MVNetwork(torch.nn.Module):
         use_mffm: bool = False,
         use_decoder: bool = False,
         use_jepa: bool = False,
+        backbone_ckpt_dir: str = "",
     ):
         super().__init__()
         self.net_name = net_name
@@ -250,7 +252,7 @@ class MVNetwork(torch.nn.Module):
             from tadaformer_backbone import TAdaFormerBackbone
 
             network = TAdaFormerBackbone(
-                checkpoint_path="/net/tscratch/people/plgaszos/sn-mvfoul/checkpoints/tadaformer_b16_k710.pth",
+                checkpoint_path=os.path.join(backbone_ckpt_dir, "tadaformer_b16_k710.pth"),
                 num_frames=16,
                 drop_path=0.1,
                 apply_renormalize=False,
@@ -261,7 +263,7 @@ class MVNetwork(torch.nn.Module):
             from tadaformer_backbone import TAdaFormerBackbone
 
             network = TAdaFormerBackbone(
-                checkpoint_path="/net/tscratch/people/plgaszos/sn-mvfoul/checkpoints/tadaformer_l14_k710.pth",
+                checkpoint_path=os.path.join(backbone_ckpt_dir, "tadaformer_l14_k710.pth"),
                 num_frames=16,
                 drop_path=0.1,
                 apply_renormalize=False,
@@ -273,29 +275,44 @@ class MVNetwork(torch.nn.Module):
             from aim_backbone import AIMBackbone
 
             network = AIMBackbone(
-                checkpoint_path="/net/tscratch/people/plgaszos/sn-mvfoul/checkpoints/vit_b_clip_16frame_k400.pth"
+                checkpoint_path=os.path.join(backbone_ckpt_dir, "vit_b_clip_16frame_k400.pth")
             )
             self.feat_dim = 768
             self._tokens_per_view = 16
 
         elif net_name == "vjepa21_vitb":
-            from vjepa21_backbone import VJEPA21Backbone
+            from vjepa21_backbone import VJEPA21Backbone, VJEPA21_CKPT
 
-            network = VJEPA21Backbone(num_frames=16)
+            ckpt_path = (
+                os.path.join(backbone_ckpt_dir, "vjepa21_vitb_384.pt")
+                if backbone_ckpt_dir
+                else VJEPA21_CKPT
+            )
+            network = VJEPA21Backbone(num_frames=16, checkpoint_path=ckpt_path)
             self.feat_dim = 768
             self._tokens_per_view = getattr(network, "tokens_per_view", None)
 
         elif net_name == "intern_video2_dist_b":
-            from internvideo2_backbone import InternVideo2DistBBackbone
+            from internvideo2_backbone import InternVideo2DistBBackbone, IV2_CKPT
 
-            network = InternVideo2DistBBackbone(num_frames=8)
+            ckpt_path = (
+                os.path.join(backbone_ckpt_dir, "internvideo2_dist_b14.pth")
+                if backbone_ckpt_dir
+                else IV2_CKPT
+            )
+            network = InternVideo2DistBBackbone(checkpoint_path=ckpt_path, num_frames=8)
             self.feat_dim = 768
             # _tokens_per_view stays None → T_max=8 default in TransformerAggregate
 
         elif net_name == "vjepa2_vitl":
-            from vjepa21_backbone import VJEPA2ViTLBackbone
+            from vjepa21_backbone import VJEPA2ViTLBackbone, VJEPA2_VITL_CKPT
 
-            network = VJEPA2ViTLBackbone(num_frames=16)
+            ckpt_path = (
+                os.path.join(backbone_ckpt_dir, "vjepa2_vitl_384.pt")
+                if backbone_ckpt_dir
+                else VJEPA2_VITL_CKPT
+            )
+            network = VJEPA2ViTLBackbone(num_frames=16, checkpoint_path=ckpt_path)
             self.feat_dim = network.feat_dim          # 1024, not hardcoded
             self._tokens_per_view = getattr(network, "tokens_per_view", None)  # 72
         else:

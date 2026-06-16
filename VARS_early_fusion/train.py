@@ -244,6 +244,26 @@ def _run_with_tta(model, mvclips, text_features=None):
 # ---------------------------------------------------------------------------
 
 
+def _prune_checkpoints(run_dir: str, keep_top_k: int) -> None:
+    """Delete old per-epoch checkpoints, keeping the most recent keep_top_k."""
+    import re
+
+    pattern = re.compile(r"^(\d+)_model\.pth\.tar$")
+    candidates = []
+    for fname in os.listdir(run_dir):
+        m = pattern.match(fname)
+        if m:
+            candidates.append((int(m.group(1)), os.path.join(run_dir, fname)))
+    candidates.sort(key=lambda x: x[0])
+    to_delete = candidates[:-keep_top_k] if len(candidates) > keep_top_k else []
+    for _, fpath in to_delete:
+        try:
+            os.remove(fpath)
+            logging.info(f"Pruned checkpoint: {fpath}")
+        except OSError as exc:
+            logging.warning(f"Could not delete checkpoint {fpath}: {exc}")
+
+
 def _find_vjepa_backbone(model):
     for module in model.modules():
         if hasattr(module, "get_layerwise_lr_groups"):
@@ -278,6 +298,7 @@ def trainer(
     clip_embeddings_path="",
     jepa_lambda_max=0.0,
     jepa_warmup_epochs=2,
+    keep_top_k=3,
 ):
     logging.info("start training")
     best_val = 0.0
@@ -461,6 +482,8 @@ def trainer(
             },
             os.path.join(best_model_path, f"{epoch + 1}_model.pth.tar"),
         )
+        if keep_top_k > 0:
+            _prune_checkpoints(best_model_path, keep_top_k)
 
     if "pbar" in locals():
         pbar.close()

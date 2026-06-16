@@ -21,11 +21,55 @@ PROMPT = (
     "contact region is upper body or lower body. Be concise."
 )
 
+THINKING_PROMPT = (
+    "Carefully analyze this soccer foul clip. Consider the force of the challenge, "
+    "whether there was danger to the opponent, and the exact nature of the physical "
+    "contact. Describe the contact between players and state whether the foul "
+    "contact region is upper body or lower body."
+)
+
 PROCESSOR_FALLBACK = {
     "Video-R1/Video-R1-7B",
     "Video-R1/Qwen2.5-VL-7B-COT-SFT",
 }
 BASE_PROCESSOR = "Qwen/Qwen2.5-VL-7B-Instruct"
+
+# ---------------------------------------------------------------------------
+# VLM registry
+# ---------------------------------------------------------------------------
+
+VLM_REGISTRY = {
+    "qwen2.5-vl-7b": {
+        "hf_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+        "family": "qwen2",
+        "gpus": 1,
+    },
+    "qwen3-vl-8b": {
+        "hf_id": "Qwen/Qwen3-VL-8B-Instruct",
+        "family": "qwen3",
+        "gpus": 1,
+    },
+    "qwen3-vl-30b": {
+        "hf_id": "Qwen/Qwen3-VL-30B-Instruct",
+        "family": "qwen3",
+        "gpus": 2,
+    },
+    "qwen3-vl-235b": {
+        "hf_id": "Qwen/Qwen3-VL-235B-Instruct",
+        "family": "qwen3",
+        "gpus": 8,
+    },
+    "gemma4-12b": {
+        "hf_id": "google/gemma-4-12b-it",
+        "family": "gemma4",
+        "gpus": 1,
+    },
+    "gemma4-31b": {
+        "hf_id": "google/gemma-4-31b-it",
+        "family": "gemma4",
+        "gpus": 2,
+    },
+}
 
 
 class _Timeout:
@@ -138,6 +182,135 @@ def _load_qwen_api():
     return client
 
 
+def _strip_thinking(text: str) -> str:
+    """Remove <think>...</think> block produced by thinking-mode models."""
+    import re
+
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
+def _load_vlm(model_key: str, quantize: str = "", hf_cache_dir: str = ""):
+    """
+    Load a VLM from VLM_REGISTRY by short key.
+
+    Returns (model, processor, family) where family is "qwen2", "qwen3", or "gemma4".
+    device_map="auto" is always used so SLURM --gres=gpu:N controls GPU count.
+    """
+    entry = VLM_REGISTRY[model_key]
+    hf_id = entry["hf_id"]
+    family = entry["family"]
+
+    model_kwargs: dict = {
+        "torch_dtype": torch.bfloat16,
+        "device_map": "auto",
+        "trust_remote_code": True,
+    }
+
+    if quantize in ("4bit", "8bit"):
+        from transformers import BitsAndBytesConfig
+
+        try:
+            import bitsandbytes  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "bitsandbytes is required for quantized loading. "
+                "Install it with `pip install bitsandbytes`."
+            ) from exc
+
+        if quantize == "4bit":
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+            )
+        else:
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_8bit=True,
+                llm_int8_threshold=6.0,
+            )
+
+    from transformers import AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(hf_id, trust_remote_code=True)
+
+    if family == "qwen2":
+        from transformers import Qwen2_5_VLForConditionalGeneration
+
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(hf_id, **model_kwargs)
+    elif family == "qwen3":
+        try:
+            from transformers import Qwen3VLForConditionalGeneration
+
+            model = Qwen3VLForConditionalGeneration.from_pretrained(hf_id, **model_kwargs)
+        except ImportError:
+            logging.warning(
+                "Qwen3VLForConditionalGeneration not found in transformers; "
+                "falling back to Qwen2_5_VLForConditionalGeneration."
+            )
+            from transformers import Qwen2_5_VLForConditionalGeneration
+
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(hf_id, **model_kwargs)
+    elif family == "gemma4":
+        try:
+            from transformers import AutoModelForImageTextToText
+
+            model = AutoModelForImageTextToText.from_pretrained(hf_id, **model_kwargs)
+        except Exception:
+            from transformers import AutoModelForCausalLM
+
+            model = AutoModelForCausalLM.from_pretrained(hf_id, **model_kwargs)
+    else:
+        raise ValueError(f"Unknown VLM family: {family!r}")
+
+    model.eval()
+    return model, processor, family
+
+
+def _generate_description_gemma(
+    model,
+    processor,
+    mp4_path: str,
+    num_frames: int,
+    prompt: str,
+    max_new_tokens: int,
+    timeout_s: Optional[int],
+    thinking: bool = False,
+) -> str:
+    """Generate a description using a Gemma 4 vision-language model."""
+    try:
+        from PIL import Image as PILImage
+    except ImportError as exc:
+        raise ImportError("Pillow is required for Gemma inference.") from exc
+
+    frames_np = _sample_frames(mp4_path, num_frames)
+    pil_frames = [PILImage.fromarray(frames_np[i]) for i in range(frames_np.shape[0])]
+
+    content = [{"type": "image"} for _ in pil_frames]
+    content.append({"type": "text", "text": prompt})
+    messages = [{"role": "user", "content": content}]
+
+    text_input = processor.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    inputs = processor(
+        text=[text_input],
+        images=pil_frames,
+        padding=True,
+        return_tensors="pt",
+    ).to("cuda")
+
+    with _Timeout(timeout_s):
+        with torch.no_grad():
+            out = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+            )
+
+    generated = out[:, inputs["input_ids"].shape[1]:]
+    text = processor.batch_decode(generated, skip_special_tokens=True)[0]
+    return text.strip()
+
+
 def _load_clip(model_name: str, device: str):
     from transformers import CLIPModel, CLIPTokenizer
 
@@ -156,17 +329,24 @@ def _generate_description(
     prompt: str,
     max_new_tokens: int,
     timeout_s: Optional[int],
+    family: str = "qwen2",
+    thinking: bool = False,
 ) -> str:
     try:
         from qwen_vl_utils import process_vision_info
     except ImportError as exc:
         raise ImportError(
-            "qwen_vl_utils is required for Qwen2.5-VL vision inputs."
+            "qwen_vl_utils is required for Qwen VL vision inputs."
         ) from exc
+
+    # Qwen3 thinking mode: prepend /think to the text content
+    effective_prompt = prompt
+    if thinking and family == "qwen3":
+        effective_prompt = "/think\n" + prompt
 
     content = [
         {"type": "video", "video": mp4_path, "nframes": num_frames},
-        {"type": "text", "text": prompt},
+        {"type": "text", "text": effective_prompt},
     ]
     messages = [{"role": "user", "content": content}]
     text_input = processor.apply_chat_template(
@@ -315,30 +495,90 @@ def _iter_actions(data_root: str) -> List[Tuple[str, str]]:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract Qwen descriptions and CLIP text embeddings from mp4 clips"
+        description="Extract VLM descriptions and CLIP text embeddings from mp4 clips"
+    )
+
+    # --- VLM selection (new registry-based API) ---
+    parser.add_argument(
+        "--vlm_model",
+        default=None,
+        choices=list(VLM_REGISTRY.keys()),
+        type=str,
+        help=(
+            "VLM to use for description generation. "
+            "Choices: " + ", ".join(VLM_REGISTRY.keys())
+        ),
     )
     parser.add_argument(
-        "--data_root",
-        required=True,
+        "--vlm_quantize",
+        default=None,
+        choices=["4bit", "8bit"],
         type=str,
-        help="Root folder containing Train/Valid/Test subdirectories with mp4 clips",
+        help="Optional quantization for local VLM (4bit or 8bit)",
+    )
+    parser.add_argument(
+        "--thinking",
+        action="store_true",
+        help=(
+            "Enable thinking/chain-of-thought mode. "
+            "For Qwen3 models adds /think prefix; strips <think> blocks before CLIP encoding."
+        ),
+    )
+
+    # --- Path args ---
+    parser.add_argument(
+        "--data_dir",
+        default=None,
+        type=str,
+        help="Dataset root directory containing Train/Valid/Test subdirs (overrides --data_root)",
+    )
+    parser.add_argument(
+        "--output_dir",
+        default=None,
+        type=str,
+        help=(
+            "Output directory. HDF5 and JSON filenames are derived automatically: "
+            "text_embeddings_{vlm_model}.h5 / descriptions_{vlm_model}.json"
+        ),
+    )
+    parser.add_argument(
+        "--hf_cache_dir",
+        default="",
+        type=str,
+        help="Override HF_HOME and TRANSFORMERS_CACHE to this directory",
+    )
+
+    # --- Legacy / backward-compat args ---
+    parser.add_argument(
+        "--data_root",
+        default=None,
+        type=str,
+        help="(Legacy) Root folder with Train/Valid/Test mp4 clips. Use --data_dir instead.",
     )
     parser.add_argument(
         "--output_hdf5",
-        required=True,
+        default=None,
         type=str,
-        help="Output HDF5 path for CLIP text embeddings",
+        help="(Legacy) Explicit output HDF5 path. Overrides --output_dir derived name.",
     )
     parser.add_argument(
         "--output_json",
-        required=True,
+        default=None,
         type=str,
-        help="Output JSON path for raw Qwen descriptions",
+        help="(Legacy) Explicit output JSON path. Overrides --output_dir derived name.",
     )
     parser.add_argument(
         "--qwen_model",
         default="Qwen/Qwen2.5-VL-7B-Instruct",
         type=str,
+        help="(Legacy) HuggingFace model ID for Qwen. Use --vlm_model instead.",
+    )
+    parser.add_argument(
+        "--quantization",
+        default="none",
+        choices=["none", "4bit", "8bit"],
+        type=str,
+        help="(Legacy) Quantization for --qwen_model. Use --vlm_quantize instead.",
     )
     parser.add_argument(
         "--use_api",
@@ -349,7 +589,7 @@ def main():
         "--api_model",
         default="qwen3-vl-235b-a22b-thinking",
         type=str,
-        help="Qwen API model name",
+        help="Qwen API model name (used with --use_api)",
     )
     parser.add_argument(
         "--clip_model",
@@ -357,16 +597,10 @@ def main():
         type=str,
     )
     parser.add_argument(
-        "--quantization",
-        default="none",
-        choices=["none", "4bit", "8bit"],
-        type=str,
-    )
-    parser.add_argument(
         "--num_frames",
         default=8,
         type=int,
-        help="Number of frames to sample from each clip for Qwen",
+        help="Number of frames to sample from each clip",
     )
     parser.add_argument("--max_new_tokens", default=256, type=int)
     parser.add_argument("--timeout_s", default=60, type=int)
@@ -383,26 +617,57 @@ def main():
         format="%(asctime)s [%(levelname)-5.5s] %(message)s",
     )
 
-    data_root = os.path.abspath(os.path.expanduser(os.path.expandvars(args.data_root)))
-    output_hdf5 = os.path.abspath(
-        os.path.expanduser(os.path.expandvars(args.output_hdf5))
-    )
-    output_json = os.path.abspath(
-        os.path.expanduser(os.path.expandvars(args.output_json))
-    )
+    # Set HF cache dirs before any HF imports
+    if args.hf_cache_dir:
+        os.environ["HF_HOME"] = args.hf_cache_dir
+        os.environ["TRANSFORMERS_CACHE"] = args.hf_cache_dir
 
-    logging.info("Loading Qwen and CLIP...")
-    qwen = None
+    # Resolve data root
+    raw_data_root = args.data_dir or args.data_root
+    if not raw_data_root:
+        parser.error("Provide --data_dir (or legacy --data_root).")
+    data_root = os.path.abspath(os.path.expanduser(os.path.expandvars(raw_data_root)))
+
+    # Resolve output paths
+    model_suffix = args.vlm_model if args.vlm_model else "custom"
+    if args.output_hdf5:
+        output_hdf5 = os.path.abspath(os.path.expanduser(os.path.expandvars(args.output_hdf5)))
+    elif args.output_dir:
+        output_hdf5 = os.path.join(args.output_dir, f"text_embeddings_{model_suffix}.h5")
+    else:
+        parser.error("Provide --output_dir or (legacy) --output_hdf5.")
+
+    if args.output_json:
+        output_json = os.path.abspath(os.path.expanduser(os.path.expandvars(args.output_json)))
+    elif args.output_dir:
+        output_json = os.path.join(args.output_dir, f"descriptions_{model_suffix}.json")
+    else:
+        parser.error("Provide --output_dir or (legacy) --output_json.")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_hdf5)) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(output_json)) or ".", exist_ok=True)
+
+    # Select prompt
+    active_prompt = THINKING_PROMPT if args.thinking else PROMPT
+
+    # Load models
+    logging.info("Loading VLM and CLIP...")
+    vlm = None
     processor = None
+    vlm_family = "qwen2"
     client = None
+
     if args.use_api:
         client = _load_qwen_api()
+    elif args.vlm_model:
+        quantize = args.vlm_quantize or ""
+        vlm, processor, vlm_family = _load_vlm(args.vlm_model, quantize=quantize)
     else:
-        qwen, processor = _load_qwen(args.qwen_model, args.quantization)
-    clip_model, clip_tokenizer = _load_clip(args.clip_model, device="cuda")
+        quantize = args.quantization if args.quantization != "none" else ""
+        vlm, processor = _load_qwen(args.qwen_model, quantize)
+        vlm_family = "qwen2"
 
-    os.makedirs(os.path.dirname(output_hdf5) or ".", exist_ok=True)
-    os.makedirs(os.path.dirname(output_json) or ".", exist_ok=True)
+    clip_model, clip_tokenizer = _load_clip(args.clip_model, device="cuda")
 
     pairs = _iter_actions(data_root)
     logging.info(f"Total actions found: {len(pairs)}")
@@ -426,29 +691,43 @@ def main():
                     text = _generate_description_api(
                         client,
                         sampled_frames,
-                        PROMPT,
+                        active_prompt,
                         max_tokens=args.max_new_tokens,
                         model_name=args.api_model,
                     )
-                else:
-                    text = _generate_description(
-                        qwen,
+                elif vlm_family == "gemma4":
+                    text = _generate_description_gemma(
+                        vlm,
                         processor,
                         mp4_path,
                         args.num_frames,
-                        PROMPT,
+                        active_prompt,
                         max_new_tokens=args.max_new_tokens,
                         timeout_s=args.timeout_s,
+                        thinking=args.thinking,
                     )
+                else:
+                    text = _generate_description(
+                        vlm,
+                        processor,
+                        mp4_path,
+                        args.num_frames,
+                        active_prompt,
+                        max_new_tokens=args.max_new_tokens,
+                        timeout_s=args.timeout_s,
+                        family=vlm_family,
+                        thinking=args.thinking,
+                    )
+
                 if not text:
                     raise ValueError("empty description")
 
-                emb = _encode_text(
-                    clip_model,
-                    clip_tokenizer,
-                    text,
-                    device="cuda",
-                )
+                # Strip thinking block before CLIP encoding
+                text_for_clip = _strip_thinking(text) if args.thinking else text
+                if not text_for_clip:
+                    text_for_clip = text  # fallback: use raw text if stripping empties it
+
+                emb = _encode_text(clip_model, clip_tokenizer, text_for_clip, device="cuda")
                 descriptions[action_id] = text
 
             except Exception as exc:
@@ -461,7 +740,9 @@ def main():
             processed_count += 1
 
     payload = {
-        "prompt": PROMPT,
+        "prompt": active_prompt,
+        "vlm_model": args.vlm_model or args.qwen_model,
+        "thinking": args.thinking,
         "descriptions": descriptions,
         "failures": failures,
     }
@@ -469,7 +750,8 @@ def main():
         json.dump(payload, f, indent=2)
 
     logging.info(
-        f"Done. Saved {len(descriptions)} embeddings; {len(failures)} failures."
+        f"Done. Saved {len(descriptions)} embeddings to {output_hdf5}; "
+        f"{len(failures)} failures."
     )
 
 
