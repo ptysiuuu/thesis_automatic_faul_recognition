@@ -493,6 +493,106 @@ def _iter_actions(data_root: str) -> List[Tuple[str, str]]:
     return pairs
 
 
+def _iter_actions_hdf5(hdf5_dir: str) -> List[Tuple[str, str, str]]:
+    """
+    Return (output_key, hdf5_path, action_id) for all actions across splits.
+
+    output_key  — the key written to the output text-embedding HDF5.
+    hdf5_path   — path to the compact HDF5 that contains the frames.
+    action_id   — group name inside that HDF5 (e.g. 'action_0').
+    """
+    pairs = []
+    for split in ("Train", "Valid", "Test"):
+        hdf5_path = os.path.join(hdf5_dir, f"{split}.hdf5")
+        if not os.path.exists(hdf5_path):
+            logging.warning(f"HDF5 not found, skipping: {hdf5_path}")
+            continue
+        with h5py.File(hdf5_path, "r") as f:
+            action_ids = sorted(f.keys())
+        for action_id in action_ids:
+            key = action_id if split == "Train" else f"{split}_{action_id}"
+            pairs.append((key, hdf5_path, action_id))
+    return pairs
+
+
+def _load_pil_frames_from_hdf5(
+    hdf5_path: str,
+    action_id: str,
+    clip_key: str = "clip_0",
+    num_frames: int = 8,
+) -> Optional[List]:
+    """Load evenly-spaced PIL frames from one clip in a compact HDF5."""
+    try:
+        from PIL import Image as _PILImage
+    except ImportError:
+        return None
+
+    with h5py.File(hdf5_path, "r") as f:
+        key = f"{action_id}/{clip_key}"
+        if key not in f:
+            return None
+        frames_np = f[key][:]  # [T, H, W, C] uint8
+
+    T = frames_np.shape[0]
+    if T == 0:
+        return None
+
+    indices = np.linspace(0, T - 1, min(num_frames, T), dtype=int)
+    return [_PILImage.fromarray(frames_np[i]) for i in indices]
+
+
+def _generate_description_from_frames(
+    model,
+    processor,
+    pil_frames: list,
+    prompt: str,
+    max_new_tokens: int,
+    timeout_s: Optional[int],
+    family: str = "qwen2",
+    thinking: bool = False,
+) -> str:
+    """Generate a description using pre-extracted PIL frames (no mp4 needed)."""
+    try:
+        from qwen_vl_utils import process_vision_info
+    except ImportError as exc:
+        raise ImportError("qwen_vl_utils is required for Qwen VL inference.") from exc
+
+    effective_prompt = prompt
+    if thinking and family == "qwen3":
+        effective_prompt = "/think\n" + prompt
+
+    content = [{"type": "image", "image": f} for f in pil_frames]
+    content.append({"type": "text", "text": effective_prompt})
+
+    messages = [{"role": "user", "content": content}]
+    text_input = processor.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    image_inputs, video_inputs = process_vision_info(messages)
+
+    inputs = processor(
+        text=[text_input],
+        images=image_inputs,
+        videos=video_inputs,
+        padding=True,
+        return_tensors="pt",
+    ).to("cuda")
+
+    with _Timeout(timeout_s):
+        with torch.no_grad():
+            out = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                temperature=None,
+                top_p=None,
+            )
+
+    generated = out[:, inputs["input_ids"].shape[1]:]
+    text = processor.batch_decode(generated, skip_special_tokens=True)[0]
+    return text.strip()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Extract VLM descriptions and CLIP text embeddings from mp4 clips"
@@ -530,7 +630,16 @@ def main():
         "--data_dir",
         default=None,
         type=str,
-        help="Dataset root directory containing Train/Valid/Test subdirs (overrides --data_root)",
+        help="SoccerNet_Data root with Train/Valid/Test mp4 clips. "
+             "Required when NOT using --hdf5_dir.",
+    )
+    parser.add_argument(
+        "--hdf5_dir",
+        default=None,
+        type=str,
+        help="Directory with pre-extracted compact HDF5 files (Train.hdf5 / Valid.hdf5 / "
+             "Test.hdf5). When provided, frames are read from HDF5 instead of mp4 files "
+             "(e.g. SoccerNet_HDF5_compact). Supersedes --data_dir for frame reading.",
     )
     parser.add_argument(
         "--output_dir",
@@ -622,11 +731,17 @@ def main():
         os.environ["HF_HOME"] = args.hf_cache_dir
         os.environ["TRANSFORMERS_CACHE"] = args.hf_cache_dir
 
-    # Resolve data root
-    raw_data_root = args.data_dir or args.data_root
-    if not raw_data_root:
-        parser.error("Provide --data_dir (or legacy --data_root).")
-    data_root = os.path.abspath(os.path.expanduser(os.path.expandvars(raw_data_root)))
+    # Resolve frame source: HDF5 compact takes priority over raw mp4
+    use_hdf5 = bool(args.hdf5_dir)
+    if use_hdf5:
+        hdf5_root = os.path.abspath(os.path.expanduser(os.path.expandvars(args.hdf5_dir)))
+        data_root = None
+    else:
+        raw_data_root = args.data_dir or args.data_root
+        if not raw_data_root:
+            parser.error("Provide --hdf5_dir (compact HDF5) or --data_dir (mp4 root).")
+        data_root = os.path.abspath(os.path.expanduser(os.path.expandvars(raw_data_root)))
+        hdf5_root = None
 
     # Resolve output paths
     model_suffix = args.vlm_model if args.vlm_model else "custom"
@@ -669,55 +784,85 @@ def main():
 
     clip_model, clip_tokenizer = _load_clip(args.clip_model, device="cuda")
 
-    pairs = _iter_actions(data_root)
-    logging.info(f"Total actions found: {len(pairs)}")
+    if use_hdf5:
+        hdf5_pairs = _iter_actions_hdf5(hdf5_root)
+        logging.info(f"Total actions found in HDF5: {len(hdf5_pairs)}")
+        pairs = None
+    else:
+        pairs = _iter_actions(data_root)
+        logging.info(f"Total actions found: {len(pairs)}")
+        hdf5_pairs = None
 
     descriptions: Dict[str, str] = {}
     failures: List[str] = []
     processed_count = 0
 
+    iter_source = hdf5_pairs if use_hdf5 else pairs
+
     with h5py.File(output_hdf5, "a") as out_h5:
-        for action_id, mp4_path in tqdm(pairs, desc="Extracting"):
+        for item in tqdm(iter_source, desc="Extracting"):
             if args.max_actions is not None and processed_count >= args.max_actions:
                 break
+
+            # Unpack depending on mode
+            if use_hdf5:
+                action_id, src_hdf5_path, raw_action_id = item
+            else:
+                action_id, mp4_path = item
 
             if action_id in out_h5:
                 processed_count += 1
                 continue
 
             try:
-                if args.use_api:
-                    sampled_frames = _sample_frames(mp4_path, args.num_frames)
-                    text = _generate_description_api(
-                        client,
-                        sampled_frames,
-                        active_prompt,
-                        max_tokens=args.max_new_tokens,
-                        model_name=args.api_model,
+                if use_hdf5:
+                    # Read pre-extracted frames from compact HDF5
+                    pil_frames = _load_pil_frames_from_hdf5(
+                        src_hdf5_path, raw_action_id, "clip_0", args.num_frames
                     )
-                elif vlm_family == "gemma4":
-                    text = _generate_description_gemma(
-                        vlm,
-                        processor,
-                        mp4_path,
-                        args.num_frames,
-                        active_prompt,
-                        max_new_tokens=args.max_new_tokens,
-                        timeout_s=args.timeout_s,
-                        thinking=args.thinking,
-                    )
+                    if not pil_frames:
+                        raise ValueError("clip_0 not found in HDF5")
+                    if args.use_api:
+                        import numpy as _np
+                        frames_np = _np.stack([_np.array(f) for f in pil_frames])
+                        text = _generate_description_api(
+                            client, frames_np, active_prompt,
+                            max_tokens=args.max_new_tokens, model_name=args.api_model,
+                        )
+                    elif vlm_family == "gemma4":
+                        # Gemma uses a different processor; HDF5 mode not yet supported
+                        raise NotImplementedError(
+                            "gemma4 + --hdf5_dir is not supported; use --data_dir with mp4s."
+                        )
+                    else:
+                        # qwen2 / qwen3 — process_vision_info handles PIL image content
+                        text = _generate_description_from_frames(
+                            vlm, processor, pil_frames, active_prompt,
+                            max_new_tokens=args.max_new_tokens,
+                            timeout_s=args.timeout_s, family=vlm_family,
+                            thinking=args.thinking,
+                        )
                 else:
-                    text = _generate_description(
-                        vlm,
-                        processor,
-                        mp4_path,
-                        args.num_frames,
-                        active_prompt,
-                        max_new_tokens=args.max_new_tokens,
-                        timeout_s=args.timeout_s,
-                        family=vlm_family,
-                        thinking=args.thinking,
-                    )
+                    # Original mp4 path
+                    if args.use_api:
+                        sampled_frames = _sample_frames(mp4_path, args.num_frames)
+                        text = _generate_description_api(
+                            client, sampled_frames, active_prompt,
+                            max_tokens=args.max_new_tokens, model_name=args.api_model,
+                        )
+                    elif vlm_family == "gemma4":
+                        text = _generate_description_gemma(
+                            vlm, processor, mp4_path, args.num_frames, active_prompt,
+                            max_new_tokens=args.max_new_tokens,
+                            timeout_s=args.timeout_s, thinking=args.thinking,
+                        )
+                    else:
+                        text = _generate_description(
+                            vlm, processor, mp4_path, args.num_frames, active_prompt,
+                            max_new_tokens=args.max_new_tokens,
+                            timeout_s=args.timeout_s, family=vlm_family,
+                            thinking=args.thinking,
+                        )
 
                 if not text:
                     raise ValueError("empty description")
@@ -725,7 +870,7 @@ def main():
                 # Strip thinking block before CLIP encoding
                 text_for_clip = _strip_thinking(text) if args.thinking else text
                 if not text_for_clip:
-                    text_for_clip = text  # fallback: use raw text if stripping empties it
+                    text_for_clip = text
 
                 emb = _encode_text(clip_model, clip_tokenizer, text_for_clip, device="cuda")
                 descriptions[action_id] = text
