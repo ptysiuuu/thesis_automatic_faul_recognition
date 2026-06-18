@@ -225,19 +225,11 @@ def _load_vlm(model_key: str, quantize: str = "", hf_cache: str = ""):
         else:
             model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
 
-    from transformers import AutoProcessor
+    from transformers import AutoModelForVision2Seq, AutoProcessor
     processor = AutoProcessor.from_pretrained(hf_id, trust_remote_code=True)
 
-    if family == "qwen3":
-        try:
-            from transformers import Qwen3VLForConditionalGeneration
-            model = Qwen3VLForConditionalGeneration.from_pretrained(hf_id, **model_kwargs)
-        except ImportError:
-            from transformers import Qwen2_5_VLForConditionalGeneration
-            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(hf_id, **model_kwargs)
-    elif family == "qwen2":
-        from transformers import Qwen2_5_VLForConditionalGeneration
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(hf_id, **model_kwargs)
+    if family in ("qwen3", "qwen2"):
+        model = AutoModelForVision2Seq.from_pretrained(hf_id, **model_kwargs)
     else:
         raise ValueError(f"Unknown VLM family: {family!r}")
 
