@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
-from torchvision.io.video import read_video
+read_video = None
 
 
 PROMPT = (
@@ -69,6 +69,11 @@ VLM_REGISTRY = {
         "family": "gemma4",
         "gpus": 2,
     },
+    "qwen3-vl-30b-a3b": {
+    "hf_id":  "/net/obelix/homes/aszostek/hf_models/qwen3-vl-30b",
+    "family": "qwen3",
+    "gpus":   1,
+},
 }
 
 
@@ -238,9 +243,9 @@ def _load_vlm(model_key: str, quantize: str = "", hf_cache_dir: str = ""):
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(hf_id, **model_kwargs)
     elif family == "qwen3":
         try:
-            from transformers import Qwen3VLForConditionalGeneration
+            from transformers import Qwen3VLMoeForConditionalGeneration
 
-            model = Qwen3VLForConditionalGeneration.from_pretrained(hf_id, **model_kwargs)
+            model = Qwen3VLMoeForConditionalGeneration.from_pretrained(hf_id, **model_kwargs)
         except ImportError:
             logging.warning(
                 "Qwen3VLForConditionalGeneration not found in transformers; "

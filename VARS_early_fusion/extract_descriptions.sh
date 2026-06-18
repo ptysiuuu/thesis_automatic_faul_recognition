@@ -1,31 +1,31 @@
 #!/bin/bash
-#SBATCH --job-name=QWEN_extract_descriptions
-#SBATCH --partition=plgrid-gpu-a100
-#SBATCH --account=plggolemml26-gpu-a100
+#SBATCH --job-name=extract_desc_qwen3
+#SBATCH --output=slurm_logs/extract_desc_%j.out
+#SBATCH --error=slurm_logs/extract_desc_%j.err
 #SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=128G
+#SBATCH --time=12:00:00
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=64G
-#SBATCH --time=14:00:00
-#SBATCH --output=extract_descriptions_%j.out
+#SBATCH --partition=gpu
+#SBATCH --nodelist=h86
 
-export HF_HOME=/net/tscratch/people/plgaszos/.cache/huggingface
-export TRANSFORMERS_CACHE=$HF_HOME
+BASE_DIR="${HOME}/thesis_automatic_faul_recognition/VARS_early_fusion"
 
-HDF5_ROOT="/net/tscratch/people/plgaszos/SoccerNet_HDF5"
-OUT_DIR="/net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion/features"
-OUTPUT_H5="${OUT_DIR}/text_embeddings.h5"
-OUTPUT_JSON="${OUT_DIR}/text_descriptions.json"
+module load uv
+cd "${BASE_DIR}"
+uv sync --reinstall
+source .venv/bin/activate
 
-source /net/people/plgrid/plgaszos/miniconda3/etc/profile.d/conda.sh
-conda activate /net/tscratch/people/plgaszos/conda_envs/vlm32b
-cd /net/tscratch/people/plgaszos/sn-mvfoul/VARS_early_fusion
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
 
 python extract_descriptions.py \
-    --data_root /net/tscratch/people/plgaszos/SoccerNet_Data \
-    --output_hdf5 features/text_embeddings.h5 \
-    --output_json features/text_descriptions.json \
-    --quantization none \
-	--num_frames 8 \
-    --max_new_tokens 60 \
-    --timeout_s 60
+    --hdf5_dir      "${HOME}/data/SoccerNet_HDF5_compact" \
+    --output_dir    "${BASE_DIR}/features" \
+    --vlm_model     qwen3-vl-30b-a3b \
+    --thinking \
+    --num_frames    8 \
+    --max_new_tokens 256 \
+    --timeout_s     90
