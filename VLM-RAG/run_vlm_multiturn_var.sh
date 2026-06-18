@@ -60,11 +60,7 @@ echo "Start     : $(date)"
 # ── Environment ───────────────────────────────────────────────────────────────
 # Use the VARS_early_fusion venv (same deps: transformers, qwen_vl_utils, h5py)
 module load uv
-if [[ ! -d "${VENV_DIR}" ]]; then
-    echo "Building venv via uv (first run)..."
-    cd "${HOME}/thesis_automatic_faul_recognition/VARS_early_fusion"
-    uv sync --reinstall
-fi
+uv sync --reinstall
 
 source "${VENV_DIR}/bin/activate"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
