@@ -226,7 +226,6 @@ def _load_vlm(model_key: str, quantize: str = "", hf_cache: str = ""):
         else:
             model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
 
-    from transformers import AutoModelForVision2Seq, AutoProcessor
     processor = AutoProcessor.from_pretrained(hf_id, trust_remote_code=True)
 
     if family in ("qwen3", "qwen2"):
