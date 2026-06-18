@@ -373,7 +373,7 @@ def _load_views(
     views = []
     for clip_name in clips[:max_views]:
         clip_key = clip_name.replace(".mp4", "")
-        hdf5_key = f"{action_id}/{clip_key}"
+        hdf5_key = f"action_{action_id}/{clip_key}"
         if hdf5_key not in hdf5_file:
             continue
         frames_np = hdf5_file[hdf5_key][:]
