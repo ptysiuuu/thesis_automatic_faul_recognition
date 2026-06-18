@@ -40,6 +40,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from transformers import Qwen3VLMoeForConditionalGeneration, AutoProcessor
 
 import h5py
 import numpy as np
@@ -229,7 +230,11 @@ def _load_vlm(model_key: str, quantize: str = "", hf_cache: str = ""):
     processor = AutoProcessor.from_pretrained(hf_id, trust_remote_code=True)
 
     if family in ("qwen3", "qwen2"):
-        model = AutoModelForVision2Seq.from_pretrained(hf_id, **model_kwargs)
+        model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+			hf_id,
+			torch_dtype=torch.bfloat16,
+			device_map="auto",
+		)
     else:
         raise ValueError(f"Unknown VLM family: {family!r}")
 
