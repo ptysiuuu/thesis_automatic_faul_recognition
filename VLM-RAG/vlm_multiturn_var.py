@@ -96,9 +96,9 @@ _SEVERITY_MAP = {
 VLM_REGISTRY = {
     # MoE 30B (3B activated) — fits on 1 GPU, 10× faster than dense 30B
     "qwen3-vl-30b-a3b": {
-        "hf_id":  "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "hf_id":  "/net/obelix/homes/aszostek/hf_models/qwen3-vl-30b",
         "family": "qwen3",
-        "gpus":   2,  # 30B weights still ~60 GB
+        "gpus":   1,  # 30B weights still ~60 GB
     },
     "qwen3-vl-30b": {
         "hf_id":  "Qwen/Qwen3-VL-30B-Instruct",
