@@ -70,6 +70,8 @@ source "${VENV_DIR}/bin/activate"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export HF_HOME="${HF_CACHE}"
 export TRANSFORMERS_CACHE="${HF_CACHE}"
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
 
 cd "${VLM_RAG_DIR}"
 
