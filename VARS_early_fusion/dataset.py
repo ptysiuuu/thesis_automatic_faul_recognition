@@ -211,12 +211,14 @@ class MultiViewDataset(Dataset):
         if key not in hdf5:
             return None
 
-        raw = hdf5[key][:]  # [stored_frames, H, W, C] uint8
+        frames = hdf5[key][:]  # [stored_frames, H, W, C] uint8
 
-        # Subsample stored_frames → num_frames
-        idx = np.linspace(0, self.stored_frames - 1, self.num_frames).round().astype(int)
-        idx = np.clip(idx, 0, raw.shape[0] - 1)
-        frames = raw[idx]  # [num_frames, H, W, C]
+        # stride=2 when backbone expects 16 frames from a 32-frame store
+        if self.num_frames == 16 and frames.shape[0] >= 32:
+            frames = frames[::2]                                        # [16, H, W, C]
+        elif frames.shape[0] > self.num_frames:
+            idx = np.linspace(0, frames.shape[0] - 1, self.num_frames).round().astype(int)
+            frames = frames[idx]
 
         # [T, H, W, C] → [T, C, H, W] float32 in [0, 1]
         frames = torch.from_numpy(frames).float() / 255.0

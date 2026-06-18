@@ -148,6 +148,7 @@ class TAdaFormerBackbone(nn.Module):
         apply_renormalize: bool = True,
         arch: str = "b16",
         gradient_checkpointing: bool = False,
+        spatial_size: tuple = None,
     ):
         super().__init__()
         self.num_frames = num_frames
@@ -162,6 +163,7 @@ class TAdaFormerBackbone(nn.Module):
             self.feat_dim = 768
 
         self._arch = arch
+        self._tgt_spatial = spatial_size  # (tgt_h, tgt_w) in patch units, e.g. (16, 28) for 224×392
 
         # Register normalisation as buffers so they move with .cuda()
         self.register_buffer("norm_mean", torch.tensor(self.MEAN).view(1, 3, 1, 1, 1))
@@ -226,6 +228,38 @@ class TAdaFormerBackbone(nn.Module):
             out[name] = tensor
         return out
 
+    def _maybe_interpolate_spatial(self, sd: dict, tgt_h: int, tgt_w: int) -> dict:
+        """Bicubic interpolation of 2D spatial positional embeddings for non-square inputs."""
+        out = {}
+        for name, tensor in sd.items():
+            if ("pos_embed" in name or "spatial_embed" in name) and tensor.dim() == 3:
+                N = tensor.shape[1] - 1          # subtract CLS token
+                src_hw = int(N ** 0.5)
+                if src_hw * src_hw != N:
+                    out[name] = tensor
+                    continue                      # skip non-square grids
+                if src_hw == tgt_h and src_hw == tgt_w:
+                    out[name] = tensor
+                    continue                      # already correct size
+
+                cls_pe   = tensor[:, :1, :]      # [1, 1, D]
+                patch_pe = tensor[:, 1:, :]       # [1, N, D]
+                D = patch_pe.shape[-1]
+
+                patch_pe = patch_pe.reshape(1, src_hw, src_hw, D)
+                patch_pe = patch_pe.permute(0, 3, 1, 2).float()   # [1, D, H, W]
+                patch_pe = F.interpolate(
+                    patch_pe, size=(tgt_h, tgt_w),
+                    mode="bicubic", align_corners=False
+                ).to(tensor.dtype)
+                patch_pe = patch_pe.permute(0, 2, 3, 1).reshape(1, tgt_h * tgt_w, D)
+
+                out[name] = torch.cat([cls_pe, patch_pe], dim=1)
+                print(f"[TAdaFormer] Interpolated '{name}': {src_hw}×{src_hw} → {tgt_h}×{tgt_w}")
+            else:
+                out[name] = tensor
+        return out
+
     def _load_checkpoint(self, path):
         ckpt = torch.load(path, map_location="cpu")
 
@@ -248,6 +282,9 @@ class TAdaFormerBackbone(nn.Module):
 
         # Interpolate temporal positional embeddings when num_frames != checkpoint default
         sd = self._maybe_interpolate_temporal(sd)
+        # Phase 2: interpolate spatial PE for non-square inputs (e.g. 224×392)
+        if self._tgt_spatial is not None:
+            sd = self._maybe_interpolate_spatial(sd, *self._tgt_spatial)
 
         missing, unexpected = self._vit.load_state_dict(sd, strict=False)
         print(f"[TAdaFormer-{self._arch}] Loaded {path}")

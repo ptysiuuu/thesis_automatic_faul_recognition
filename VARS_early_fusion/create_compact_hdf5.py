@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 
 def _decode_clip(args):
-    mp4_path, start_frame, end_frame, num_frames, img_size = args
+    mp4_path, start_frame, end_frame, num_frames, img_height, img_width = args
     try:
         from decord import VideoReader, cpu
 
@@ -31,7 +31,7 @@ def _decode_clip(args):
         frames = vr.get_batch(indices).asnumpy()  # [T, H, W, 3]
         resized = np.stack(
             [
-                cv2.resize(f, (img_size, img_size), interpolation=cv2.INTER_LINEAR)
+                cv2.resize(f, (img_width, img_height), interpolation=cv2.INTER_LINEAR)
                 for f in frames
             ]
         )
@@ -41,7 +41,7 @@ def _decode_clip(args):
 
 
 def process_split(
-    data_dir, output_dir, split, start_frame, end_frame, num_frames, img_size, num_workers
+    data_dir, output_dir, split, start_frame, end_frame, num_frames, img_height, img_width, num_workers
 ):
     split_dir = os.path.join(data_dir, split)
     if not os.path.isdir(split_dir):
@@ -68,7 +68,8 @@ def process_split(
         h5f.attrs["start_frame"] = start_frame
         h5f.attrs["end_frame"] = end_frame
         h5f.attrs["num_frames"] = num_frames
-        h5f.attrs["img_size"] = img_size
+        h5f.attrs["img_height"] = img_height
+        h5f.attrs["img_width"] = img_width
 
         pending = [(key, mp4) for key, mp4 in tasks if key not in h5f]
         already_done = len(tasks) - len(pending)
@@ -79,7 +80,7 @@ def process_split(
             return
 
         decode_args = [
-            (mp4, start_frame, end_frame, num_frames, img_size) for _, mp4 in pending
+            (mp4, start_frame, end_frame, num_frames, img_height, img_width) for _, mp4 in pending
         ]
         key_map = {i: key for i, (key, _) in enumerate(pending)}
 
@@ -121,11 +122,15 @@ def main():
     parser.add_argument("--output_dir", required=True, help="Where to write HDF5 files")
     parser.add_argument("--start_frame", type=int, default=58)
     parser.add_argument("--end_frame", type=int, default=92)
-    parser.add_argument("--img_size", type=int, default=224)
+    parser.add_argument("--img_size", type=int, default=224, help="Square resize (used as height when --img_width not set)")
+    parser.add_argument("--img_width", type=int, default=None, help="Target width; set to 392 for Phase 2 (224×392). Defaults to --img_size for square output.")
     parser.add_argument("--num_frames", type=int, default=32)
     parser.add_argument("--splits", nargs="+", default=["Train", "Valid", "Test"])
     parser.add_argument("--num_workers", type=int, default=16)
     args = parser.parse_args()
+
+    img_height = args.img_size
+    img_width = args.img_width if args.img_width is not None else args.img_size
 
     for split in args.splits:
         process_split(
@@ -135,7 +140,8 @@ def main():
             args.start_frame,
             args.end_frame,
             args.num_frames,
-            args.img_size,
+            img_height,
+            img_width,
             args.num_workers,
         )
 
