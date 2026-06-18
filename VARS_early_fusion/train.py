@@ -299,6 +299,8 @@ def trainer(
     jepa_lambda_max=0.0,
     jepa_warmup_epochs=2,
     keep_top_k=3,
+    warmup_epochs=0,
+    base_lr=1e-4,
 ):
     logging.info("start training")
     best_val = 0.0
@@ -354,6 +356,11 @@ def trainer(
                     f"Backbone unfrozen at epoch {freeze_epoch} (prefix='{backbone_prefix}') — "
                     f"{len(backbone_params)} param groups added at LR=1e-5"
                 )
+
+        if warmup_epochs > 0 and epoch < warmup_epochs:
+            warmup_scale = (epoch + 1) / warmup_epochs
+            for pg in optimizer.param_groups:
+                pg["lr"] = base_lr * warmup_scale
 
         print(f"\nEpoch {epoch + 1}/{max_epochs}")
         pbar = tqdm(total=len(train_loader), desc="Training", leave=True)

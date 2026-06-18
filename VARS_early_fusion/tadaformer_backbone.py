@@ -147,6 +147,7 @@ class TAdaFormerBackbone(nn.Module):
         drop_path: float = 0.1,
         apply_renormalize: bool = True,
         arch: str = "b16",
+        gradient_checkpointing: bool = False,
     ):
         super().__init__()
         self.num_frames = num_frames
@@ -176,11 +177,12 @@ class TAdaFormerBackbone(nn.Module):
             self._load_checkpoint(checkpoint_path)
         else:
             print(f"[TAdaFormer-{arch}] WARNING: checkpoint not found at {checkpoint_path}")
-        for block in self._vit.layers:
-            orig_fwd = block.forward
-            block.forward = lambda x, fn=orig_fwd: checkpoint(
-                fn, x, use_reentrant=False
-            )
+        if gradient_checkpointing:
+            for block in self._vit.layers:
+                orig_fwd = block.forward
+                block.forward = lambda x, fn=orig_fwd: checkpoint(
+                    fn, x, use_reentrant=False
+                )
 
     def _maybe_interpolate_temporal(self, sd: dict) -> dict:
         """

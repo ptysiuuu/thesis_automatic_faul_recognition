@@ -205,6 +205,7 @@ class MVNetwork(torch.nn.Module):
         use_jepa: bool = False,
         backbone_ckpt_dir: str = "",
         backbone_num_frames: int = None,
+        backbone_grad_checkpointing: bool = False,
     ):
         super().__init__()
         self.net_name = net_name
@@ -258,6 +259,7 @@ class MVNetwork(torch.nn.Module):
                 num_frames=_tada_frames,
                 drop_path=0.1,
                 apply_renormalize=False,
+                gradient_checkpointing=backbone_grad_checkpointing,
             )
             self.feat_dim = 768
 
@@ -272,6 +274,7 @@ class MVNetwork(torch.nn.Module):
                 drop_path=0.1,
                 apply_renormalize=False,
                 arch="l14",
+                gradient_checkpointing=backbone_grad_checkpointing,
             )
             self.feat_dim = network.feat_dim  # 1024
 

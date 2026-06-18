@@ -183,6 +183,16 @@ def checkArguments(args):
 
 
 # ---------------------------------------------------------------------------
+# Optimizer factory
+# ---------------------------------------------------------------------------
+
+
+def _make_optimizer(optimizer_name: str, param_groups, weight_decay: float, **kwargs):
+    cls = torch.optim.AdamW if optimizer_name == "adamw" else torch.optim.Adam
+    return cls(param_groups, weight_decay=weight_decay, **kwargs)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -512,6 +522,7 @@ def main(args):
             use_jepa=use_jepa,
             backbone_ckpt_dir=args.backbone_ckpt_dir,
             backbone_num_frames=_backbone_num_frames,
+            backbone_grad_checkpointing=args.backbone_grad_checkpointing,
         ).cuda()
         backbone_prefix = "aggregation_model.model."
         logging.info(
@@ -649,11 +660,9 @@ def main(args):
                 )
             else:
                 optimizer_groups.append({"params": backbone_params, "lr": 1e-5})
-            optimizer = torch.optim.AdamW(
-                optimizer_groups,
-                betas=(0.9, 0.999),
-                eps=1e-7,
-                weight_decay=weight_decay,
+            optimizer = _make_optimizer(
+                args.optimizer, optimizer_groups, weight_decay,
+                betas=(0.9, 0.999), eps=1e-7,
             )
             logging.info(
                 f"Resuming from epoch {epoch_start} — backbone already unfrozen"
@@ -662,11 +671,9 @@ def main(args):
             optimizer_groups = [{"params": head_params, "lr": LR}]
             if adapter_params:
                 optimizer_groups.append({"params": adapter_params, "lr": adapter_lr})
-            optimizer = torch.optim.AdamW(
-                optimizer_groups,
-                betas=(0.9, 0.999),
-                eps=1e-7,
-                weight_decay=weight_decay,
+            optimizer = _make_optimizer(
+                args.optimizer, optimizer_groups, weight_decay,
+                betas=(0.9, 0.999), eps=1e-7,
             )
 
         ema = EMA(model, decay=ema_decay)
@@ -705,12 +712,9 @@ def main(args):
         optimizer_groups = [{"params": head_params, "lr": LR}]
         if adapter_params:
             optimizer_groups.append({"params": adapter_params, "lr": adapter_lr})
-        optimizer = torch.optim.AdamW(
-            optimizer_groups,
-            betas=(0.9, 0.999),
-            eps=1e-7,
-            weight_decay=weight_decay,
-            amsgrad=False,
+        optimizer = _make_optimizer(
+            args.optimizer, optimizer_groups, weight_decay,
+            betas=(0.9, 0.999), eps=1e-7,
         )
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=max_epochs, eta_min=1e-6
@@ -816,6 +820,8 @@ def main(args):
         jepa_lambda_max=jepa_lambda_max,
         jepa_warmup_epochs=jepa_warmup_epochs,
         keep_top_k=args.keep_top_k,
+        warmup_epochs=args.warmup_epochs,
+        base_lr=LR,
     )
     return 0
 
@@ -922,6 +928,19 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", default=4, type=int)
     parser.add_argument("--LR", default=1e-4, type=float)
     parser.add_argument("--weight_decay", default=1e-3, type=float)
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default="adam",
+        choices=["adam", "adamw"],
+        help="Optimizer. adamw applies weight decay correctly (STQNet recipe).",
+    )
+    parser.add_argument(
+        "--warmup_epochs",
+        type=int,
+        default=0,
+        help="Linear LR warmup epochs (STQNet uses 5). 0 disables warmup.",
+    )
     parser.add_argument("--max_epochs", default=40, type=int)
     parser.add_argument("--patience", default=8, type=int)
     parser.add_argument("--step_size", default=3, type=int)
@@ -1035,6 +1054,12 @@ if __name__ == "__main__":
         default="",
         type=str,
         help="Directory containing pretrained backbone .pth files",
+    )
+    parser.add_argument(
+        "--backbone_grad_checkpointing",
+        action="store_true",
+        default=False,
+        help="Enable gradient checkpointing in TAdaFormer backbone (saves memory, slower).",
     )
     parser.add_argument(
         "--backbone_num_frames",
