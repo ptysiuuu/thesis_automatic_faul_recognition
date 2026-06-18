@@ -60,6 +60,7 @@ echo "Start     : $(date)"
 # ── Environment ───────────────────────────────────────────────────────────────
 # Use the VARS_early_fusion venv (same deps: transformers, qwen_vl_utils, h5py)
 module load uv
+cd "${HOME}/thesis_automatic_faul_recognition/VLM-RAG"
 uv sync --reinstall
 
 source "${VENV_DIR}/bin/activate"
