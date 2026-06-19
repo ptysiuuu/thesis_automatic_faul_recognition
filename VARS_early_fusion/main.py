@@ -524,6 +524,9 @@ def main(args):
             backbone_num_frames=_backbone_num_frames,
             backbone_grad_checkpointing=args.backbone_grad_checkpointing,
         ).cuda()
+        if torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs")
+            model = nn.DataParallel(model)
         backbone_prefix = "aggregation_model.model."
         logging.info(
             f"Multi-view mode: MVNetwork (backbone={pre_model}, agr={pooling_type}, "

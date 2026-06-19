@@ -420,13 +420,14 @@ def trainer(
         print("VALIDATION RESULTS:", results)
 
         val_lb = results.get("leaderboard_value", 0)
+        raw_model = model.module if isinstance(model, nn.DataParallel) else model
         if val_lb > best_val:
             best_val = val_lb
             no_improve = 0
             torch.save(
                 {
                     "epoch": epoch + 1,
-                    "state_dict": model.state_dict(),
+                    "state_dict": raw_model.state_dict(),
                     "ema": ema.state_dict(),
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict(),
@@ -477,7 +478,7 @@ def trainer(
         torch.save(
             {
                 "epoch": epoch + 1,
-                "state_dict": model.state_dict(),
+                "state_dict": raw_model.state_dict(),
                 "ema": ema.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "scheduler": scheduler.state_dict(),
