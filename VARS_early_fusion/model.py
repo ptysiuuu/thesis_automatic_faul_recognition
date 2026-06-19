@@ -267,7 +267,7 @@ class MVNetwork(torch.nn.Module):
             from tadaformer_backbone import TAdaFormerBackbone
 
             _tada_frames = backbone_num_frames if backbone_num_frames is not None else 16
-            _l14_ckpt = f"tadaformer_l14_k710_{_tada_frames}f.pth"
+            _l14_ckpt = f"tadaformer_l14_k710k400_{_tada_frames}f.pth"
             network = TAdaFormerBackbone(
                 checkpoint_path=os.path.join(backbone_ckpt_dir, _l14_ckpt),
                 num_frames=_tada_frames,
@@ -275,6 +275,7 @@ class MVNetwork(torch.nn.Module):
                 apply_renormalize=False,
                 arch="l14",
                 gradient_checkpointing=backbone_grad_checkpointing,
+                spatial_size=(20, 35),
             )
             self.feat_dim = network.feat_dim  # 1024
 
