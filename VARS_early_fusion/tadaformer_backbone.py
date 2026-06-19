@@ -181,6 +181,12 @@ class TAdaFormerBackbone(nn.Module):
 
         if spatial_size is not None:                         # ← add these two lines
             self._resize_positional_embedding(*spatial_size)
+            tgt_h, tgt_w = spatial_size
+            for m in self._vit.modules():
+                if hasattr(m, 'num_frames') and hasattr(m, 'rf_func'):
+                    m.spatial_h = tgt_h   # 20 for 280px height
+                    m.spatial_w = tgt_w   # 35 for 490px width
+                    print(f"[TAdaFormer] Set TAdaConv spatial: {tgt_h}×{tgt_w}")
         if gradient_checkpointing:
             for block in self._vit.layers:
                 orig_fwd = block.forward
