@@ -120,6 +120,30 @@ def _make_l14_cfg(num_frames=16, num_classes=0, drop_path=0.1):
     )
 
 
+def _resize_positional_embedding(self, tgt_h: int, tgt_w: int):
+    """Bicubic resize of spatial positional embedding after checkpoint load."""
+    tgt_n = 1 + tgt_h * tgt_w
+    for module in self._vit.modules():
+        if not hasattr(module, "positional_embedding"):
+            continue
+        pe = module.positional_embedding          # nn.Parameter [N, D]
+        if pe.shape[0] == tgt_n:
+            return
+        N, D = pe.shape
+        src_hw = int(round((N - 1) ** 0.5))
+        cls_pe   = pe[:1, :].detach()
+        patch_pe = pe[1:, :].detach()
+        patch_pe = patch_pe.reshape(1, src_hw, src_hw, D).permute(0, 3, 1, 2).float()
+        patch_pe = F.interpolate(
+            patch_pe, size=(tgt_h, tgt_w), mode="bicubic", align_corners=False
+        )
+        patch_pe = patch_pe.permute(0, 2, 3, 1).reshape(tgt_h * tgt_w, D).to(pe.dtype)
+        module.positional_embedding = nn.Parameter(
+            torch.cat([cls_pe, patch_pe], dim=0)
+        )
+        print(f"[TAdaFormer] Resized pos. embed: {N} → {tgt_n} ({src_hw}×{src_hw} → {tgt_h}×{tgt_w})")
+        return
+
 # ---------------------------------------------------------------------------
 # Backbone wrapper
 # ---------------------------------------------------------------------------
@@ -179,6 +203,9 @@ class TAdaFormerBackbone(nn.Module):
             self._load_checkpoint(checkpoint_path)
         else:
             print(f"[TAdaFormer-{arch}] WARNING: checkpoint not found at {checkpoint_path}")
+
+        if spatial_size is not None:                         # ← add these two lines
+            self._resize_positional_embedding(*spatial_size)
         if gradient_checkpointing:
             for block in self._vit.layers:
                 orig_fwd = block.forward
