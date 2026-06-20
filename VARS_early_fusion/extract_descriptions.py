@@ -321,10 +321,9 @@ def _generate_description_gemma(
 
 
 def _load_clip(model_name: str, device: str):
-    from transformers import CLIPModel, CLIPTokenizer
-
+    from transformers import CLIPTextModelWithProjection, CLIPTokenizer
     tokenizer = CLIPTokenizer.from_pretrained(model_name)
-    model = CLIPModel.from_pretrained(model_name)
+    model = CLIPTextModelWithProjection.from_pretrained(model_name)
     model.to(device)
     model.eval()
     return model, tokenizer
@@ -466,22 +465,15 @@ def _sample_frames(mp4_path: str, num_frames: int) -> np.ndarray:
     return video[indices].numpy()
 
 
-def _encode_text(
-    clip_model,
-    tokenizer,
-    text: str,
-    device: str,
-) -> np.ndarray:
-    inputs = tokenizer(
-    text,
-    padding=True,
-    truncation=True,
-    max_length=77,
-    return_tensors="pt",
-	)
+def _encode_text(clip_model, clip_tokenizer, text: str, device: str) -> np.ndarray:
+    inputs = clip_tokenizer(
+        text, padding=True, truncation=True,
+        max_length=77, return_tensors="pt",
+    )
     inputs = {k: v.to(device) for k, v in inputs.items()}
     with torch.no_grad():
-        text_features = clip_model.get_text_features(**inputs)
+        outputs = clip_model(**inputs)
+        text_features = outputs.text_embeds
         text_features = F.normalize(text_features, dim=-1)
     return text_features[0].detach().cpu().numpy().astype(np.float32)
 
