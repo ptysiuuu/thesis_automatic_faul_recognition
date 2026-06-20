@@ -22,7 +22,7 @@ export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 
 python extract_descriptions.py \
-    --hdf5_dir      "${HOME}/data/SoccerNet_HDF5_compact" \
+    --hdf5_dir      "${HOME}/data/SoccerNet_HDF5_compact_280x490" \
     --output_dir    "${BASE_DIR}/features" \
     --vlm_model     qwen3-vl-30b-a3b \
     --thinking \
