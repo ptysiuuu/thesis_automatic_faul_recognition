@@ -16,9 +16,9 @@ read_video = None
 
 
 PROMPT = (
-    "Describe this soccer foul in 2-3 sentences: the type of challenge, "
-    "whether contact is upper or lower body, the force level (light/moderate/hard/excessive), "
-    "whether the challenge is reckless or dangerous, and whether the player fell."
+    "In exactly 2 short sentences, max 40 words total: "
+    "describe the tackle type, body region (upper/lower), force (light/moderate/hard/excessive), "
+    "and whether reckless/dangerous. State if the player fell."
 )
 
 THINKING_PROMPT = (
