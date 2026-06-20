@@ -22,10 +22,12 @@ PROMPT = (
 )
 
 THINKING_PROMPT = (
-    "Carefully analyze this soccer foul clip. Consider the force of the challenge, "
-    "whether there was danger to the opponent, and the exact nature of the physical "
-    "contact. Describe the contact between players and state whether the foul "
-    "contact region is upper body or lower body."
+    "Watch this soccer foul clip carefully. Think about what actually happens: "
+    "is it a tackle, push, elbow, trip, or handball? "
+    "Is the contact upper body (chest/shoulder/arm/head) or lower body (shin/ankle/knee/thigh)? "
+    "How forceful — light/moderate/hard/excessive? Did the player fall?\n\n"
+    "Then write ONE sentence (max 30 words) describing exactly what you see, "
+    "focusing on what makes this specific foul distinct."
 )
 
 PROCESSOR_FALLBACK = {
