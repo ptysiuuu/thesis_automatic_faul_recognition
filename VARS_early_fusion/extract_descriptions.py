@@ -50,9 +50,9 @@ VLM_REGISTRY = {
         "gpus": 1,
     },
     "qwen3-vl-30b": {
-        "hf_id": "Qwen/Qwen3-VL-30B-Instruct",
+        "hf_id": "/net/obelix/homes/aszostek/hf_models/qwen3-vl-30b",
         "family": "qwen3",
-        "gpus": 2,
+        "gpus": 1,
     },
     "qwen3-vl-235b": {
         "hf_id": "Qwen/Qwen3-VL-235B-Instruct",
@@ -102,7 +102,7 @@ class _Timeout:
 
 
 def _load_qwen(model_name: str, quantization: str):
-    from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+    from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor ,Qwen3VLMoeForConditionalGeneration
 
     model_kwargs = dict(
         torch_dtype=torch.bfloat16,
@@ -146,9 +146,11 @@ def _load_qwen(model_name: str, quantization: str):
     )
 
     try:
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_name, **model_kwargs
-        )
+        model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+			model_name,
+			torch_dtype=torch.bfloat16,
+			device_map="auto",
+		)
     except OSError as exc:
         msg = str(exc)
         if "does not appear to have files named" in msg and "safetensors" in msg:
@@ -157,9 +159,11 @@ def _load_qwen(model_name: str, quantization: str):
             )
             model_kwargs_fallback = dict(model_kwargs)
             model_kwargs_fallback["use_safetensors"] = False
-            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                model_name, **model_kwargs_fallback
-            )
+            model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+			model_name,
+			torch_dtype=torch.bfloat16,
+			device_map="auto",
+		)
         else:
             raise
     model.eval()
