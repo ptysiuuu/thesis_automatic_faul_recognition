@@ -25,7 +25,6 @@ python extract_descriptions.py \
     --hdf5_dir      "${HOME}/data/SoccerNet_HDF5_compact_280x490" \
     --output_dir    "${BASE_DIR}/features" \
     --vlm_model     qwen3-vl-30b-a3b \
-    --thinking \
     --num_frames    8 \
     --max_new_tokens 256 \
     --timeout_s     90 \

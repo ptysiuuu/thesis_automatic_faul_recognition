@@ -16,9 +16,9 @@ read_video = None
 
 
 PROMPT = (
-    "Given the following video clip of a soccer foul, briefly describe "
-    "the physical contact between players and state whether the foul "
-    "contact region is upper body or lower body. Be concise."
+    "Describe this soccer foul in 2-3 sentences: the type of challenge, "
+    "whether contact is upper or lower body, the force level (light/moderate/hard/excessive), "
+    "whether the challenge is reckless or dangerous, and whether the player fell."
 )
 
 THINKING_PROMPT = (
