@@ -37,7 +37,7 @@ _TORCHVISION_MODELS = {
     "aim_vitb16",
     "vjepa21_vitb",
     "intern_video2_dist_b",
-    "vjepa2_vitl_256",
+    "vjepa2_vitl",
 }
 HIERA_MODELS = {
     "hiera_base_16x224",
@@ -80,6 +80,27 @@ class TAdaFormerTransform:
         # x: [T, C, H, W] in [0, 1]
         x = self.resize(x)
         x = self.crop(x)
+        x = self.normalize(x)
+        return x
+
+
+class VJEPA2ViTLTransform:
+    """
+    Transform for V-JEPA 2.1 ViT-L.
+    Resizes 280x490 (16:9) → 256x448 (16:9, multiples of 16).
+    No square crop — preserves aspect ratio.
+    """
+    def __init__(self):
+        import torchvision.transforms as T
+        self.resize = T.Resize((256, 448), antialias=True)
+        self.normalize = T.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        )
+
+    def __call__(self, x):
+        # x: [C, H, W] float tensor
+        x = self.resize(x)
         x = self.normalize(x)
         return x
 
@@ -325,7 +346,7 @@ def main(args):
         **{k: HieraTransform(size=224) for k in HIERA_MODELS},
         "vjepa21_vitb": VJEPA21Transform(size=384),
         "intern_video2_dist_b": InternVideo2Transform(size=224),
-        "vjepa2_vitl": VJEPA21Transform(size=384),
+        "vjepa2_vitl": VJEPA2ViTLTransform(),
     }
     # Early fusion always uses MViT-v2-S weights transforms (backbone is hardcoded).
     transforms_model = (
